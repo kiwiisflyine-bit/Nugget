@@ -20,6 +20,7 @@ public struct PlaybackResult: Sendable, Hashable, Codable {
     public let duration: Int?
     public let expiresInSeconds: Int
     public let clientName: String
+    public let userAgent: String?
     public let musicVideoType: String?
     /// Has video dimensions.
     public let hasVideoContent: Bool
@@ -43,6 +44,7 @@ public struct PlaybackResult: Sendable, Hashable, Codable {
         duration: Int?,
         expiresInSeconds: Int,
         clientName: String,
+        userAgent: String? = nil,
         musicVideoType: String?,
         hasVideoContent: Bool,
         muxedStreamUrl: String?,
@@ -61,6 +63,7 @@ public struct PlaybackResult: Sendable, Hashable, Codable {
         self.duration = duration
         self.expiresInSeconds = expiresInSeconds
         self.clientName = clientName
+        self.userAgent = userAgent
         self.musicVideoType = musicVideoType
         self.hasVideoContent = hasVideoContent
         self.muxedStreamUrl = muxedStreamUrl
