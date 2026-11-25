@@ -28,14 +28,16 @@ enum ThemeMode: String, CaseIterable, Identifiable, SettingsOption {
 }
 
 enum PlayerBackgroundStyle: String, CaseIterable, Identifiable, SettingsOption {
-    case dynamic
+    case opaque
+    case blurTransparent
     case solid
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .dynamic: return "Album Art"
+        case .opaque: return "Opaque"
+        case .blurTransparent: return "Blur Transparent"
         case .solid: return "Solid"
         }
     }
@@ -110,8 +112,6 @@ struct AccentPreset: Identifiable, Hashable {
 
     var id: String { name }
 
-    /// The pre-baked alternate app icon matching this accent, or nil when
-    /// the accent equals the default.
     var alternateIconName: String? {
         nil
     }
@@ -177,17 +177,14 @@ final class SettingsStore {
         didSet { Self.defaults.set(lyricsAlignment.rawValue, forKey: Keys.lyricsAlignment) }
     }
 
-    /// Shifts lyric timing by this many seconds (positive = later, negative = earlier).
     var lyricsOffsetSeconds: Double {
         didSet { Self.defaults.set(lyricsOffsetSeconds, forKey: Keys.lyricsOffsetSeconds) }
     }
 
-    /// Shows a progress ring during long instrumental gaps in synced lyrics.
     var showIntervalIndicator: Bool {
         didSet { Self.defaults.set(showIntervalIndicator, forKey: Keys.showIntervalIndicator) }
     }
 
-    /// Displays romanized lyrics for Japanese/Korean/Cyrillic lines when available.
     var romanizeCurrentTrack: Bool {
         didSet { Self.defaults.set(romanizeCurrentTrack, forKey: Keys.romanizeCurrentTrack) }
     }
@@ -198,12 +195,10 @@ final class SettingsStore {
         didSet { Self.defaults.set(equalizerEnabled, forKey: Keys.equalizerEnabled) }
     }
 
-    /// The id of the selected preset, or "custom" when the user edited bands manually.
     var equalizerPresetID: String {
         didSet { Self.defaults.set(equalizerPresetID, forKey: Keys.equalizerPresetID) }
     }
 
-    /// Current band gains in dB, one per `equalizerFrequencies`.
     var equalizerGains: [Double] {
         didSet { Self.defaults.set(equalizerGains, forKey: Keys.equalizerGains) }
     }
@@ -396,7 +391,11 @@ final class SettingsStore {
     }
 
     private static func loadEnum<E: RawRepresentable>(_ key: String, default defaultValue: E) -> E where E.RawValue == String {
-        E(rawValue: defaults.string(forKey: key) ?? "") ?? defaultValue
+        if let raw = defaults.string(forKey: key), raw == "dynamic",
+           let opaque = E(rawValue: "opaque") {
+            return opaque
+        }
+        return E(rawValue: defaults.string(forKey: key) ?? "") ?? defaultValue
     }
 
     private init() {
@@ -406,8 +405,7 @@ final class SettingsStore {
             .first { $0.name == (d.string(forKey: Keys.accentName) ?? AccentPreset.all[0].name) }?
             .color ?? AccentPreset.all[0].color
         accentName = d.string(forKey: Keys.accentName) ?? AccentPreset.all[0].name
-        playerBackgroundStyle = Self.loadEnum(Keys.playerBackgroundStyle, default: .dynamic)
-        // Migrated when Explore took index 2 (was Search): stored 2 → 3.
+        playerBackgroundStyle = Self.loadEnum(Keys.playerBackgroundStyle, default: .opaque)
         let storedTab = Self.load(Keys.defaultTab, default: 0)
         defaultTab = storedTab == 2 ? 3 : storedTab
         lyricsFontSize = Self.load(Keys.lyricsFontSize, default: 17)
