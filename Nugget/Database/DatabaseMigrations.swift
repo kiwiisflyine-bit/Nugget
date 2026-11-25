@@ -29,6 +29,9 @@ enum DatabaseMigrations {
             t.column("thumbnail_url", .text)
             t.column("local_path", .text).notNull()
             t.column("downloaded_at", .text).notNull()
+            t.column("itag", .integer)
+            t.column("codec", .text)
+            t.column("bitrate", .integer)
         }
     }
 
@@ -254,6 +257,28 @@ enum DatabaseMigrations {
                 t.column("thumbnail_url", .text)
                 t.column("duration", .integer).notNull().defaults(to: 0)
                 t.column("pinned_at", .datetime).notNull()
+            }
+        }
+    }
+
+    static let v9: (Database) throws -> Void = logged("v9") { db in
+        // Audio quality metadata persistence for offline display
+        if try db.tableExists("downloaded_track") {
+            let existing = try db.columns(in: "downloaded_track").map(\.name)
+            if !existing.contains("itag") {
+                try db.alter(table: "downloaded_track") { t in
+                    t.add(column: "itag", .integer)
+                }
+            }
+            if !existing.contains("codec") {
+                try db.alter(table: "downloaded_track") { t in
+                    t.add(column: "codec", .text)
+                }
+            }
+            if !existing.contains("bitrate") {
+                try db.alter(table: "downloaded_track") { t in
+                    t.add(column: "bitrate", .integer)
+                }
             }
         }
     }
