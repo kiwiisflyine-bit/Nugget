@@ -561,7 +561,7 @@ public enum CommentsParser {
 
     private static func utf16String(_ slice: ArraySlice<UInt16>) -> String {
         guard !slice.isEmpty else { return "" }
-        var units = Array(slice)
+        let units = Array(slice)
         return units.withUnsafeBufferPointer { buffer in
             String(utf16CodeUnits: buffer.baseAddress!, count: buffer.count)
         }
