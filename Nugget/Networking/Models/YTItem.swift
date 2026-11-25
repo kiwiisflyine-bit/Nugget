@@ -280,6 +280,8 @@ struct SongItem: Codable, Hashable {
     /// art-tracks), when the row carried one. Nil for stored rows parsed
     /// before this existed — previously persisted queues keep decoding.
     var musicVideoType: String?
+    var audioBadge: String?
+    var is256AAC: Bool?
 
     /// True for music-video results (subtitle starts with "Video").
     var isMusicVideo: Bool { isVideo == true }
@@ -630,6 +632,8 @@ extension SongItem {
         self.isExplicit = false
         self.playlistId = nil
         self.likeStatus = nil
+        self.audioBadge = nil
+        self.is256AAC = nil
     }
 
     init(entity: DownloadedTrackEntity) {
@@ -646,6 +650,8 @@ extension SongItem {
         self.isExplicit = false
         self.playlistId = nil
         self.likeStatus = nil
+        self.audioBadge = entity.audioBadgeText
+        self.is256AAC = entity.is256AAC
     }
 }
 
