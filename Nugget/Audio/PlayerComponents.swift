@@ -2,11 +2,15 @@
 //  PlayerComponents.swift
 //  Nugget
 //
-//  
+//
 //
 
 import SwiftUI
 import AVKit
+
+private func playerInkColor(for colorScheme: ColorScheme) -> Color {
+    colorScheme == .light ? .black : .white
+}
 
 // MARK: - ProgressBar
 struct ProgressBar: View {
@@ -14,6 +18,9 @@ struct ProgressBar: View {
     let accentColor: Color
     let isPlaying: Bool
     let onEditingChanged: (Bool) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var ink: Color { playerInkColor(for: colorScheme) }
 
     var body: some View {
         GeometryReader { geo in
@@ -21,14 +28,12 @@ struct ProgressBar: View {
             let elapsedWidth = max(0, min(width, width * CGFloat(progress)))
 
             ZStack(alignment: .leading) {
-                // Remaining track (unwatched)
                 Capsule()
-                    .fill(.white.opacity(0.15))
+                    .fill(ink.opacity(0.16))
                     .frame(height: 6)
 
-                // Elapsed track (watched, marked)
                 Capsule()
-                    .fill(.white.opacity(0.8))
+                    .fill(ink.opacity(0.85))
                     .frame(width: elapsedWidth, height: 6)
             }
             .contentShape(Rectangle())
@@ -53,12 +58,13 @@ struct ProgressBar: View {
 struct PlayerPlayPauseButton: View {
     let isPlaying: Bool
     let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: action) {
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: 42))
-                .foregroundStyle(.white)
+                .foregroundStyle(playerInkColor(for: colorScheme))
                 .contentTransition(.symbolEffect(.replace))
         }
         .frame(width: 80, height: 80)
@@ -74,13 +80,16 @@ struct PlaybackControlsRow: View {
     let onPrevious: () -> Void
     let onPlayPause: () -> Void
     let onNext: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var ink: Color { playerInkColor(for: colorScheme) }
 
     var body: some View {
         HStack(spacing: 0) {
             Button(action: onPrevious) {
                 Image(systemName: "backward.fill")
                     .font(.title)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ink)
             }
             .disabled(!hasPrevious)
             .opacity(hasPrevious ? 1 : 0.3)
@@ -88,12 +97,12 @@ struct PlaybackControlsRow: View {
             .accessibilityLabel("Previous")
 
             PlayerPlayPauseButton(isPlaying: isPlaying, action: onPlayPause)
-            .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
 
             Button(action: onNext) {
                 Image(systemName: "forward.fill")
                     .font(.title)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ink)
             }
             .disabled(!hasNext)
             .opacity(hasNext ? 1 : 0.3)
@@ -135,26 +144,57 @@ struct PlayerTransportAirPlayFooter: View {
     }
 }
 
-// MARK: - SecondaryActionsRow
+// MARK: - SecondaryActionsRow (Lyrics left, AirPlay center, Queue + Repeat right)
 struct SecondaryActionsRow: View {
+    @Binding var showLyrics: Bool
     @Binding var showQueue: Bool
     @Binding var isRepeatOn: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var ink: Color { playerInkColor(for: colorScheme) }
+
+    init(
+        showLyrics: Binding<Bool> = .constant(false),
+        showQueue: Binding<Bool>,
+        isRepeatOn: Binding<Bool>
+    ) {
+        self._showLyrics = showLyrics
+        self._showQueue = showQueue
+        self._isRepeatOn = isRepeatOn
+    }
 
     var body: some View {
         HStack(spacing: 0) {
+            // Left: Lyrics toggle
+            Button {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    showLyrics.toggle()
+                }
+            } label: {
+                Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
+                    .font(.title3)
+                    .foregroundStyle(showLyrics ? ink : ink.opacity(0.7))
+                    .padding(10)
+                    .background(showLyrics ? Circle().fill(ink.opacity(0.15)) : Circle().fill(.clear))
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Lyrics")
+
+            // Center: AirPlay / Audio output
             PlayerAirPlayControl()
                 .frame(maxWidth: .infinity)
 
-            // Queue + Repeat stacked like Apple Music
+            // Right: Queue + Repeat stacked like Apple Music
             ZStack(alignment: .topTrailing) {
                 Button {
                     showQueue.toggle()
                 } label: {
                     Image(systemName: "list.bullet")
                         .font(.title3)
-                        .foregroundStyle(showQueue ? .white : .white.opacity(0.7))
+                        .foregroundStyle(showQueue ? ink : ink.opacity(0.7))
                         .padding(10)
-                        .background(showQueue ? Circle().fill(.white.opacity(0.15)) : Circle().fill(.clear))
+                        .background(showQueue ? Circle().fill(ink.opacity(0.15)) : Circle().fill(.clear))
                 }
                 .accessibilityLabel("Queue")
 
@@ -164,7 +204,7 @@ struct SecondaryActionsRow: View {
                     } label: {
                         Image(systemName: isRepeatOn ? "repeat.1" : "repeat")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(isRepeatOn ? .white : .white.opacity(0.7))
+                            .foregroundStyle(isRepeatOn ? ink : ink.opacity(0.7))
                             .padding(4)
                     }
                     .offset(x: 2, y: -2)
@@ -178,11 +218,13 @@ struct SecondaryActionsRow: View {
 }
 
 struct PlayerAirPlayControl: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Button {} label: {
             Image(systemName: "airplayaudio")
                 .font(.title3)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(playerInkColor(for: colorScheme).opacity(0.7))
                 .padding(10)
         }
         .overlay(AirPlayButton())
