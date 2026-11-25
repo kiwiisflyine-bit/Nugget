@@ -50,6 +50,17 @@ final class NowPlaying {
 
     private var originalQueue: [SongItem]?
 
+    /// Single source of truth for the active song: matches `videoId` first so
+    /// the mini player, full player actions, and download button never diverge
+    /// from what is actually playing.
+    var currentSong: SongItem? {
+        if let videoId, let match = queueSongs.first(where: { $0.videoId == videoId }) {
+            return match
+        }
+        guard queueSongs.indices.contains(queueIndex) else { return nil }
+        return queueSongs[queueIndex]
+    }
+
     var hasNext: Bool {
         queueIndex + 1 < queueSongs.count
     }
@@ -177,7 +188,7 @@ final class NowPlaying {
     func disableShuffle() {
         guard queueSongs.indices.contains(queueIndex) else { return }
         if let orig = originalQueue {
-            let currentVideoId = queueSongs[queueIndex].videoId
+            let currentVideoId = currentSong?.videoId ?? queueSongs[queueIndex].videoId
             queueSongs = orig
             // The shuffled index is meaningless against the original array
             // (radio appends, deletes and reorders change lengths).
@@ -197,6 +208,7 @@ final class NowPlaying {
     }
 
     func repeatCurrent() {
+        repairQueueIndex()
         guard queueSongs.indices.contains(queueIndex) else { return }
         playCurrentSong(logContext: "repeatCurrent") {
             self.isRepeatOn = false
@@ -204,6 +216,7 @@ final class NowPlaying {
     }
 
     func playNext(automatic: Bool = false) {
+        repairQueueIndex()
         guard hasNext else { return }
         if !automatic { lastManualSkipTime = Date() }
         queueIndex += 1
@@ -211,6 +224,7 @@ final class NowPlaying {
     }
 
     func playPrevious() {
+        repairQueueIndex()
         guard hasPrevious else { return }
         lastManualSkipTime = Date()
         queueIndex -= 1
@@ -284,6 +298,9 @@ final class NowPlaying {
         self.isVideoReady = false
         self.audioBadge = audioBadge
         self.is256AAC = is256AAC
+        if let idx = queueSongs.firstIndex(where: { $0.videoId == videoId }) {
+            self.queueIndex = idx
+        }
         startTimer()
         loadThumbnail(videoId: videoId, thumbnailUrl: thumbnailUrl)
         preloadNextTrack()
@@ -414,15 +431,21 @@ final class NowPlaying {
     private func recoverFromPlaybackFailure(videoId: String?) {
         guard let videoId else {
             isPlaying = false
+            currentTime = 0
             return
         }
         PlayerController.shared.handleVideoStreamFailure()
         if let last = lastFailureAt[videoId], Date().timeIntervalSince(last) < 30 {
-            isPlaying = false
+            PlayerController.shared.stop()
+            if self.videoId == videoId {
+                isPlaying = false
+                currentTime = 0
+            }
             return
         }
         lastFailureAt[videoId] = Date()
         isPlaying = false
+        currentTime = 0
         Log.nowPlaying.notice("Stream failed mid-play, re-resolving \(videoId)")
         Task {
             await PlayerConfigStore.shared.notifyStreamRejection()
