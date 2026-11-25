@@ -29,6 +29,18 @@ struct PlayerSettingsView: View {
                         Slider(value: $settings.playerBlurIntensity, in: 0.1...1.0)
                     }
                     .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("Transparent Intensity", systemImage: "square.stack.3d.up")
+                            Spacer()
+                            Text("\(Int((settings.playerTransparentIntensity * 100).rounded()))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $settings.playerTransparentIntensity, in: 0.0...1.0)
+                    }
+                    .padding(.vertical, 4)
                 }
             } header: {
                 Text("Appearance")
