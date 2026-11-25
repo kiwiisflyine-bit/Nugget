@@ -21,11 +21,21 @@ actor PlaybackManager {
 
     /// Resolve a video and start playback. Returns the result used, or throws.
     @discardableResult
-    func resolveAndPlay(videoId: String) async throws -> PlaybackResult {
+    func resolveAndPlay(videoId: String, loadToken: UUID? = nil) async throws -> PlaybackResult {
         await MainActor.run { SponsorBlockIntegration.shared.warm(for: videoId) }
+        try Task.checkCancellation()
+
         if let localPath = await DownloadManager.shared.localURL(for: videoId) {
+            if let loadToken {
+                let isCurrent = await MainActor.run { NowPlaying.shared.currentLoadToken == loadToken }
+                guard isCurrent else {
+                    Log.playbackManager.notice("Local playback superseded for \(videoId)")
+                    throw CancellationError()
+                }
+            }
             let song = await MainActor.run { NowPlaying.shared.queueSongs.first { $0.videoId == videoId } }
             let artists = song?.artists ?? []
+            let downloadedTrack = await DownloadManager.shared.track(for: videoId)
             await PlayerController.shared.play(
                 url: localPath.absoluteString,
                 title: song?.title,
@@ -33,16 +43,24 @@ actor PlaybackManager {
                 videoId: videoId,
                 duration: song.map { TimeInterval($0.duration) },
                 artists: artists,
-                thumbnailUrl: song?.thumbnailUrl
+                thumbnailUrl: song?.thumbnailUrl,
+                loadToken: loadToken
             )
             await MainActor.run {
                 NowPlaying.shared.updateVideoAvailability()
+                if let downloadedTrack {
+                    NowPlaying.shared.updateAudioQuality(
+                        itag: downloadedTrack.itag,
+                        codec: downloadedTrack.codec,
+                        bitrate: downloadedTrack.bitrate
+                    )
+                }
             }
             return PlaybackResult(
                 streamUrl: localPath.absoluteString,
-                itag: 0,
-                mimeType: "audio/mp4",
-                bitrate: 0,
+                itag: downloadedTrack?.itag ?? 0,
+                mimeType: downloadedTrack?.codec == "OPUS" ? "audio/webm; codecs=\"opus\"" : "audio/mp4",
+                bitrate: downloadedTrack?.bitrate ?? 0,
                 audioQuality: "local",
                 videoId: videoId,
                 title: song?.title,
@@ -58,6 +76,13 @@ actor PlaybackManager {
         }
 
         if let cached = await StreamCache.shared.get(videoId: videoId) {
+            if let loadToken {
+                let isCurrent = await MainActor.run { NowPlaying.shared.currentLoadToken == loadToken }
+                guard isCurrent else {
+                    Log.playbackManager.notice("Cached playback superseded for \(videoId)")
+                    throw CancellationError()
+                }
+            }
             let queueSong = await queueSong(for: videoId)
             await PlayerController.shared.play(
                 url: cached.streamUrl,
@@ -67,43 +92,50 @@ actor PlaybackManager {
                 duration: cached.duration.flatMap { $0 > 0 ? TimeInterval($0) : nil },
                 artists: queueSong?.artists ?? [],
                 loudnessDb: cached.loudnessDb,
-                thumbnailUrl: queueSong?.thumbnailUrl
+                thumbnailUrl: queueSong?.thumbnailUrl,
+                loadToken: loadToken
             )
             await publishVideoAvailability(result: cached, videoId: videoId, rowType: queueSong?.musicVideoType)
+            await MainActor.run {
+                NowPlaying.shared.updateAudioQuality(itag: cached.itag, mimeType: cached.mimeType, bitrate: cached.bitrate)
+            }
             return cached
         }
 
+        try Task.checkCancellation()
+
+        let result: PlaybackResult
         if let existing = inflightResolutions[videoId] {
-            return try await existing.value
+            result = try await existing.value
+        } else {
+            let task = Task { [self] in
+                try await resolveFromNetwork(videoId: videoId, preferredFormat: nil, forDownload: false)
+            }
+            inflightResolutions[videoId] = task
+            defer { clearInflight(key: videoId) }
+            result = try await task.value
         }
 
-        let task = Task { [self] in
-            try await resolveAndPlayFromNetwork(videoId: videoId)
+        try Task.checkCancellation()
+        if let loadToken {
+            let isCurrent = await MainActor.run { NowPlaying.shared.currentLoadToken == loadToken }
+            guard isCurrent else {
+                Log.playbackManager.notice("Network playback superseded for \(videoId)")
+                throw CancellationError()
+            }
         }
-        inflightResolutions[videoId] = task
-        defer { clearInflight(key: videoId) }
-        return try await task.value
-    }
-
-    /// Runs the client fallback chain for playback. Only called once per
-    /// videoId by `resolveAndPlay`, which owns the in-flight dedup entry.
-    private func resolveAndPlayFromNetwork(videoId: String) async throws -> PlaybackResult {
-        var request = StreamResolveRequest.playback(videoId: videoId)
-        request.options.audioQuality = SettingsStore.shared.audioQuality
-        if request.options.audioQuality == .aac256 {
-            request.chain = ClientFallbackChain.aac256Chain
-        }
-        await InnerTubeClient.updateStreamAuth()
-        let result = try await StreamFallback.resolveFirstValid(
-            request,
-            using: InnerTubeClient.streamShared,
-            providers: .nuggetLive
-        )
-        await playNetworkResult(result, videoId: videoId)
+        await playNetworkResult(result, videoId: videoId, loadToken: loadToken)
         return result
     }
 
-    private func playNetworkResult(_ result: PlaybackResult, videoId: String) async {
+    private func playNetworkResult(_ result: PlaybackResult, videoId: String, loadToken: UUID? = nil) async {
+        if let loadToken {
+            let isCurrent = await MainActor.run { NowPlaying.shared.currentLoadToken == loadToken }
+            guard isCurrent else {
+                Log.playbackManager.notice("playNetworkResult discarded: loadToken superseded")
+                return
+            }
+        }
         let queueSong = await queueSong(for: videoId)
         await PlayerController.shared.play(
             url: result.streamUrl,
@@ -113,9 +145,13 @@ actor PlaybackManager {
             duration: result.duration.flatMap { $0 > 0 ? TimeInterval($0) : nil },
             artists: queueSong?.artists ?? [],
             loudnessDb: result.loudnessDb,
-            thumbnailUrl: queueSong?.thumbnailUrl
+            thumbnailUrl: queueSong?.thumbnailUrl,
+            loadToken: loadToken
         )
         await publishVideoAvailability(result: result, videoId: videoId, rowType: queueSong?.musicVideoType)
+        await MainActor.run {
+            NowPlaying.shared.updateAudioQuality(itag: result.itag, mimeType: result.mimeType, bitrate: result.bitrate)
+        }
     }
 
     private func clearInflight(key: String) {
@@ -150,9 +186,9 @@ actor PlaybackManager {
     func resolveVideoStream(videoId: String) async throws -> String {
         var request = StreamResolveRequest(videoId: videoId)
         request.options.audioQuality = SettingsStore.shared.audioQuality
-        if request.options.audioQuality == .aac256 {
-            request.chain = ClientFallbackChain.aac256Chain
-        }
+        request.chain = (request.options.audioQuality == .aac256)
+            ? ClientFallbackChain.aac256Chain
+            : ClientFallbackChain.preferred
         await InnerTubeClient.updateStreamAuth()
         switch try await StreamFallback.resolveVideo(
             request,
@@ -182,7 +218,11 @@ actor PlaybackManager {
     }
 
     func resolveVideoOnlyURL(videoId: String) async throws -> String {
-        let request = StreamResolveRequest(videoId: videoId)
+        var request = StreamResolveRequest(videoId: videoId)
+        request.options.audioQuality = SettingsStore.shared.audioQuality
+        request.chain = (request.options.audioQuality == .aac256)
+            ? ClientFallbackChain.aac256Chain
+            : ClientFallbackChain.preferred
         switch try await StreamFallback.resolveVideo(
             request,
             using: InnerTubeClient.nuggetShared,
@@ -225,6 +265,8 @@ actor PlaybackManager {
         request.options.downloadQuality = SettingsStore.shared.downloadQuality
         if (forDownload && request.options.downloadQuality == .aac256) || (!forDownload && request.options.audioQuality == .aac256) {
             request.chain = ClientFallbackChain.aac256Chain
+        } else {
+            request.chain = forDownload ? ClientFallbackChain.forDownload : ClientFallbackChain.preferred
         }
         await InnerTubeClient.updateStreamAuth()
         return try await StreamFallback.resolveFirstValid(
