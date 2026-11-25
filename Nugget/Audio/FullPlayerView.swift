@@ -19,7 +19,7 @@ struct FullPlayerView: View {
 
     @ObservedObject private var likeStore = LikeStore.shared
     private var isLiked: Bool {
-        guard let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil else { return false }
+        guard let song = np.currentSong else { return false }
         return likeStore.isLiked(videoId: song.videoId)
     }
     @State private var showLyrics = false
@@ -230,7 +230,7 @@ struct FullPlayerView: View {
             .task { np.preloadNeighborArtwork() }
             .task(id: np.videoId) { await loadCurrentLyrics() }
             .sheet(isPresented: $showSongMenu) {
-                if let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil {
+                if let song = np.currentSong {
                     PlayerMenuSheet(song: song, onCollapseRequest: { onCollapse() })
                 }
             }
@@ -321,11 +321,11 @@ struct FullPlayerView: View {
 
             HStack(spacing: 8) {
                 PlayerLikeButton(isLiked: isLiked) {
-                    guard let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil else { return }
+                    guard let song = np.currentSong else { return }
                     Task { await likeStore.toggle(song: song) }
                 }
 
-                if np.queueSongs.indices.contains(np.queueIndex) {
+                if np.currentSong != nil {
                     PlayerOptionsButton {
                         showSongMenu = true
                     }
