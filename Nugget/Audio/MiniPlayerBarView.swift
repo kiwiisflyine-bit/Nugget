@@ -124,19 +124,21 @@ struct MiniPlayerBarView: View {
     }
 
     private func page(for song: SongItem, width: CGFloat) -> some View {
-        HStack(spacing: 8) {
+        let isActive = song.videoId == np.videoId
+        let displayTitle = isActive && !np.title.isEmpty ? np.title : song.title
+        return HStack(spacing: 8) {
             barArtwork(for: song.videoId)
 
             VStack(alignment: .leading, spacing: 0) {
                 if isInline {
-                    Text(song.title)
+                    Text(displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .foregroundStyle(titleColor)
                 } else {
                     MarqueeText(
-                        text: song.title,
+                        text: displayTitle,
                         font: .system(size: 13, weight: .semibold),
                         frameHeight: 16,
                         textColor: titleColor
@@ -172,7 +174,7 @@ struct MiniPlayerBarView: View {
     }
 
     private var playPauseButton: some View {
-                Button(action: { player.togglePlayPause() }, label: {
+        Button(action: { player.togglePlayPause() }, label: {
             Image(systemName: np.isPlaying ? "pause.fill" : "play.fill")
                 .contentTransition(.symbolEffect(.replace))
                 .font(.system(size: 17))
@@ -194,14 +196,26 @@ struct MiniPlayerBarView: View {
 
     // MARK: - Data
 
+    private var activeIndex: Int {
+        if let videoId = np.videoId,
+           let idx = np.queueSongs.firstIndex(where: { $0.videoId == videoId }) {
+            return idx
+        }
+        return np.queueIndex
+    }
+
     private var currentSong: SongItem? {
+        if let match = np.currentSong {
+            return match
+        }
         guard np.queueSongs.indices.contains(np.queueIndex) else { return nil }
         return np.queueSongs[np.queueIndex]
     }
 
     private var prevSong: SongItem? {
-        guard np.queueSongs.indices.contains(np.queueIndex - 1) else { return nil }
-        return np.queueSongs[np.queueIndex - 1]
+        let prevIdx = activeIndex - 1
+        guard np.queueSongs.indices.contains(prevIdx) else { return nil }
+        return np.queueSongs[prevIdx]
     }
 
     /// Artist line for a queued song, falling back to the resolved author
@@ -215,8 +229,9 @@ struct MiniPlayerBarView: View {
     }
 
     private var nextSong: SongItem? {
-        guard np.queueSongs.indices.contains(np.queueIndex + 1) else { return nil }
-        return np.queueSongs[np.queueIndex + 1]
+        let nextIdx = activeIndex + 1
+        guard np.queueSongs.indices.contains(nextIdx) else { return nil }
+        return np.queueSongs[nextIdx]
     }
 
     // MARK: - Gesture
