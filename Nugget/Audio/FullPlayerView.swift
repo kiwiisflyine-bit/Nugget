@@ -76,15 +76,20 @@ struct FullPlayerView: View {
         }
     }
 
-    /// Translucent overlay that lets the underlying screen show through while
-    /// preserving contrast for foreground text and controls.
+    /// Combines blur and transparent intensity so the underlying screen shows
+    /// through while keeping foreground controls readable. Higher transparent
+    /// intensity increases visibility of the underlying screen (lowering scrim
+    /// opacity).
     private var blurOverlay: LinearGradient {
-        let strength = min(max(settings.playerBlurIntensity, 0), 1)
+        let blur = min(max(settings.playerBlurIntensity, 0), 1)
+        let seeThrough = min(max(settings.playerTransparentIntensity, 0), 1)
+        let scrimFactor = (1.0 - seeThrough * 0.65) * (0.45 + blur * 0.45)
+
         if activeColorScheme == .light {
             return LinearGradient(
                 colors: [
-                    Color.white.opacity(0.22 + strength * 0.28),
-                    Color.white.opacity(0.35 + strength * 0.35)
+                    Color.white.opacity(min(0.92, 0.16 + scrimFactor * 0.45)),
+                    Color.white.opacity(min(0.96, 0.24 + scrimFactor * 0.55))
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -92,8 +97,8 @@ struct FullPlayerView: View {
         } else {
             return LinearGradient(
                 colors: [
-                    Color.black.opacity(0.28 + strength * 0.30),
-                    Color.black.opacity(0.42 + strength * 0.33)
+                    Color.black.opacity(min(0.92, 0.20 + scrimFactor * 0.48)),
+                    Color.black.opacity(min(0.96, 0.30 + scrimFactor * 0.58))
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -110,135 +115,138 @@ struct FullPlayerView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let horizontalPadding: CGFloat = geometry.size.width < 375 ? 24 : 32
-            let isCompact = geometry.size.height < 700
-            let maxCardHeight = min(
-                geometry.size.height * (isCompact ? 0.34 : 0.40),
-                360
-            )
+        ZStack(alignment: .center) {
+            GeometryReader { geometry in
+                let horizontalPadding: CGFloat = geometry.size.width < 375 ? 24 : 32
+                let isCompact = geometry.size.height < 700
+                let maxCardHeight = min(
+                    geometry.size.height * (isCompact ? 0.34 : 0.40),
+                    360
+                )
 
-            ZStack(alignment: .center) {
-                playerBackground
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .clipped()
-                    .ignoresSafeArea()
+                ZStack(alignment: .center) {
+                    playerBackground
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    Capsule()
-                        .fill(primaryForeground.opacity(0.28))
-                        .frame(width: 36, height: 5)
-                        .padding(.top, 14)
-                        .padding(.bottom, 12)
-                        .contentShape(Rectangle().size(width: 60, height: 30))
-                        .onTapGesture {
-                            guard showLyrics else { return }
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showLyrics = false
+                    VStack(spacing: 0) {
+                        Capsule()
+                            .fill(primaryForeground.opacity(0.28))
+                            .frame(width: 36, height: 5)
+                            .padding(.top, 14)
+                            .padding(.bottom, 12)
+                            .contentShape(Rectangle().size(width: 60, height: 30))
+                            .onTapGesture {
+                                guard showLyrics else { return }
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showLyrics = false
+                                }
                             }
+                            .accessibilityLabel(showLyrics ? "Close lyrics" : "Collapse player")
+
+                        if showLyrics {
+                            LyricsView(
+                                showLyrics: $showLyrics,
+                                pendingRoute: $pendingRoute,
+                                progressSlider: { progressSlider(horizontalPadding: horizontalPadding) }
+                            )
+                        } else if np.isVideoMode && np.hasVideo {
+                            musicVideoContent
+                        } else if showQueue {
+                            QueueView(
+                                showQueue: $showQueue,
+                                isShuffleOn: $np.isShuffleOn,
+                                isRepeatOn: $np.isRepeatOn,
+                                editingProgress: $editingProgress,
+                                isEditingSlider: $isEditingSlider,
+                                pendingRoute: $pendingRoute,
+                                progressSlider: { progressSlider(horizontalPadding: horizontalPadding) }
+                            )
+                        } else {
+                            Spacer(minLength: isCompact ? 6 : 14)
+
+                            artworkCard(maxHeight: maxCardHeight, horizontalPadding: horizontalPadding)
+
+                            Spacer(minLength: isCompact ? 10 : 18)
+
+                            titleAndActionsRow
+                                .padding(.horizontal, horizontalPadding)
+                                .padding(.bottom, isCompact ? 10 : 14)
+
+                            progressSlider(horizontalPadding: horizontalPadding)
+                                .padding(.top, 2)
+                                .padding(.bottom, isCompact ? 8 : 12)
+
+                            PlaybackControlsRow(
+                                isPlaying: np.isPlaying,
+                                hasPrevious: np.hasPrevious,
+                                hasNext: np.hasNext,
+                                onPrevious: { np.playPrevious() },
+                                onPlayPause: { player.togglePlayPause() },
+                                onNext: { np.playNext() }
+                            )
+                            .foregroundStyle(primaryForeground)
+                            .tint(primaryForeground)
+                            .environment(\.colorScheme, activeColorScheme)
+                            .scaleEffect(isCompact ? 0.94 : 1)
+                            .padding(.bottom, isCompact ? 4 : 10)
+
+                            SecondaryActionsRow(
+                                showLyrics: $showLyrics,
+                                showQueue: $showQueue,
+                                isRepeatOn: $np.isRepeatOn
+                            )
+                            .foregroundStyle(secondaryForeground)
+                            .tint(primaryForeground)
+                            .environment(\.colorScheme, activeColorScheme)
+                            .padding(.horizontal, horizontalPadding - 10)
+                            .scaleEffect(isCompact ? 0.94 : 1)
+
+                            Spacer(minLength: isCompact ? 6 : 12)
                         }
-                        .accessibilityLabel(showLyrics ? "Close lyrics" : "Collapse player")
-
-                    if showLyrics {
-                        LyricsView(
-                            showLyrics: $showLyrics,
-                            pendingRoute: $pendingRoute,
-                            progressSlider: { progressSlider(horizontalPadding: horizontalPadding) }
-                        )
-                    } else if np.isVideoMode && np.hasVideo {
-                        musicVideoContent
-                    } else if showQueue {
-                        QueueView(
-                            showQueue: $showQueue,
-                            isShuffleOn: $np.isShuffleOn,
-                            isRepeatOn: $np.isRepeatOn,
-                            editingProgress: $editingProgress,
-                            isEditingSlider: $isEditingSlider,
-                            pendingRoute: $pendingRoute,
-                            progressSlider: { progressSlider(horizontalPadding: horizontalPadding) }
-                        )
-                    } else {
-                        Spacer(minLength: isCompact ? 6 : 14)
-
-                        artworkCard(maxHeight: maxCardHeight, horizontalPadding: horizontalPadding)
-
-                        Spacer(minLength: isCompact ? 10 : 18)
-
-                        titleAndActionsRow
-                            .padding(.horizontal, horizontalPadding)
-                            .padding(.bottom, isCompact ? 10 : 14)
-
-                        progressSlider(horizontalPadding: horizontalPadding)
-                            .padding(.top, 2)
-                            .padding(.bottom, isCompact ? 8 : 12)
-
-                        PlaybackControlsRow(
-                            isPlaying: np.isPlaying,
-                            hasPrevious: np.hasPrevious,
-                            hasNext: np.hasNext,
-                            onPrevious: { np.playPrevious() },
-                            onPlayPause: { player.togglePlayPause() },
-                            onNext: { np.playNext() }
-                        )
-                        .foregroundStyle(primaryForeground)
-                        .tint(primaryForeground)
-                        .environment(\.colorScheme, activeColorScheme)
-                        .scaleEffect(isCompact ? 0.94 : 1)
-                        .padding(.bottom, isCompact ? 4 : 10)
-
-                        SecondaryActionsRow(
-                            showLyrics: $showLyrics,
-                            showQueue: $showQueue,
-                            isRepeatOn: $np.isRepeatOn
-                        )
-                        .foregroundStyle(secondaryForeground)
-                        .tint(primaryForeground)
-                        .environment(\.colorScheme, activeColorScheme)
-                        .padding(.horizontal, horizontalPadding - 10)
-                        .scaleEffect(isCompact ? 0.94 : 1)
-
-                        Spacer(minLength: isCompact ? 6 : 12)
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            }
-            .foregroundStyle(primaryForeground)
-            .tint(primaryForeground)
-            .environment(\.colorScheme, activeColorScheme)
-            .toolbar(.hidden, for: .tabBar)
-            .ignoresSafeArea()
-            .offset(y: collapseOffset)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
-            .animation(.easeInOut(duration: 0.35), value: showQueue)
-            .simultaneousGesture(collapseDrag)
-            .onChange(of: np.videoId) { _, _ in
-                np.isVideoMode = false
-                showLyrics = false
-                showQueue = false
-                preloadLyrics()
-            }
-            .onChange(of: np.queueSongs.count) { _, _ in
-                np.preloadNeighborArtwork()
-                preloadLyrics()
-            }
-            .onChange(of: np.queueIndex) { _, _ in
-                np.preloadNeighborArtwork()
-            }
-            .onChange(of: showQueue) { _, newValue in
-                if newValue { np.preloadNeighborArtwork() }
-            }
-            .task { np.preloadNeighborArtwork() }
-            .task(id: np.videoId) { preloadLyrics() }
-            .sheet(isPresented: $showSongMenu) {
-                if let song = np.currentSong {
-                    PlayerMenuSheet(song: song, onCollapseRequest: { onCollapse() })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
             }
-            .background(
-                Color.clear
-                    .detailRouteSheet(item: $pendingRoute)
-            )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(primaryForeground)
+        .tint(primaryForeground)
+        .environment(\.colorScheme, activeColorScheme)
+        .toolbar(.hidden, for: .tabBar)
+        .ignoresSafeArea()
+        .offset(y: collapseOffset)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
+        .animation(.easeInOut(duration: 0.35), value: showQueue)
+        .simultaneousGesture(collapseDrag)
+        .onChange(of: np.videoId) { _, _ in
+            np.isVideoMode = false
+            showLyrics = false
+            showQueue = false
+            preloadLyrics()
+        }
+        .onChange(of: np.queueSongs.count) { _, _ in
+            np.preloadNeighborArtwork()
+            preloadLyrics()
+        }
+        .onChange(of: np.queueIndex) { _, _ in
+            np.preloadNeighborArtwork()
+        }
+        .onChange(of: showQueue) { _, newValue in
+            if newValue { np.preloadNeighborArtwork() }
+        }
+        .task { np.preloadNeighborArtwork() }
+        .task(id: np.videoId) { preloadLyrics() }
+        .sheet(isPresented: $showSongMenu) {
+            if let song = np.currentSong {
+                PlayerMenuSheet(song: song, onCollapseRequest: { onCollapse() })
+            }
+        }
+        .background(
+            Color.clear
+                .detailRouteSheet(item: $pendingRoute)
+        )
     }
 
     @ViewBuilder
@@ -265,15 +273,18 @@ struct FullPlayerView: View {
                 .animation(.easeInOut(duration: 0.6), value: np.videoId)
 
             case .blur:
-                let intensity = min(max(settings.playerBlurIntensity, 0), 1)
+                let blurIntensity = min(max(settings.playerBlurIntensity, 0), 1)
+                let transparentIntensity = min(max(settings.playerTransparentIntensity, 0), 1)
                 ZStack {
                     Rectangle()
-                        .fill(materialForBlurIntensity(intensity))
+                        .fill(materialForBlurIntensity(blurIntensity))
+                        .opacity(max(0.25, 1.0 - transparentIntensity * 0.55))
                     blurOverlay
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.35), value: intensity)
+                .animation(.easeInOut(duration: 0.35), value: blurIntensity)
+                .animation(.easeInOut(duration: 0.35), value: transparentIntensity)
             }
         }
     }
