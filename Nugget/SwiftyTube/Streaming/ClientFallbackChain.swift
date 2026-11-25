@@ -35,7 +35,7 @@ public enum ClientFallbackChain: Sendable {
     /// Fallback chain for YouTube Music playback.
     public static var preferred: [FallbackClient] {
         direct + [
-            FallbackClient(client: .webRemix, skipValidation: true),
+            FallbackClient(client: .webRemix, skipValidation: false),
             FallbackClient(client: .web, skipValidation: true)
         ]
     }
@@ -45,7 +45,7 @@ public enum ClientFallbackChain: Sendable {
     public static var aac256Chain: [FallbackClient] {
         [
             FallbackClient(client: .webMusic, skipValidation: true),
-            FallbackClient(client: .webRemix, skipValidation: true)
+            FallbackClient(client: .webRemix, skipValidation: false)
         ] + direct + [
             FallbackClient(client: .web, skipValidation: true)
         ]
