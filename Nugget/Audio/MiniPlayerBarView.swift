@@ -65,10 +65,10 @@ struct MiniPlayerBarView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 12) {
             pagingArea
-            playPauseButton
-                .padding(.trailing, 16)
+            transportControls
+                .padding(.trailing, 14)
         }
         .frame(height: barHeight)
         .frame(maxWidth: .infinity)
@@ -116,11 +116,24 @@ struct MiniPlayerBarView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .offset(x: dragOffset)
             .clipped()
+            .mask(trailingFadeMask)
             .contentShape(Rectangle())
             .gesture(dragGesture(pageWidth: pageWidth))
             .onTapGesture { onExpand() }
         }
         .frame(height: barHeight)
+    }
+
+    private var trailingFadeMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: 0.80),
+                .init(color: .clear, location: 1.0)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 
     private func page(for song: SongItem, width: CGFloat) -> some View {
@@ -151,9 +164,11 @@ struct MiniPlayerBarView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: width, alignment: .leading)
-        .padding(.leading, 16)
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
         .contentShape(Rectangle())
     }
 
@@ -173,14 +188,35 @@ struct MiniPlayerBarView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
+    private var transportControls: some View {
+        HStack(spacing: 14) {
+            playPauseButton
+            nextTrackButton
+        }
+    }
+
     private var playPauseButton: some View {
         Button(action: { player.togglePlayPause() }, label: {
             Image(systemName: np.isPlaying ? "pause.fill" : "play.fill")
                 .contentTransition(.symbolEffect(.replace))
-                .font(.system(size: 17))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(.tint)
+                .frame(width: 28, height: 28)
         })
+        .buttonStyle(.plain)
         .accessibilityLabel(np.isPlaying ? "Pause" : "Play")
+    }
+
+    private var nextTrackButton: some View {
+        Button(action: { np.playNext() }, label: {
+            Image(systemName: "forward.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(np.hasNext ? Color.primary : Color.primary.opacity(0.35))
+                .frame(width: 28, height: 28)
+        })
+        .buttonStyle(.plain)
+        .disabled(!np.hasNext)
+        .accessibilityLabel("Next track")
     }
 
     private var progressLine: some View {
