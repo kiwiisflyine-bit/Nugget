@@ -633,7 +633,7 @@ extension PlayerController {
         let reason = endFile.reason
         let isEof = reason == MPV_END_FILE_REASON_EOF
         let isError = reason == MPV_END_FILE_REASON_ERROR
-        let mpvErrCode = endFile.error.rawValue
+        let mpvErrCode = endFile.error
         let mpvErrMsg = String(cString: mpv_error_string(endFile.error))
         let stoppedVideoId = self.currentVideoId ?? self.pendingVideoId
         Task { @MainActor [weak self] in
