@@ -225,6 +225,39 @@ public enum StreamResolver: Sendable {
             }
         }
 
+        // If no direct/ciphered adaptive format worked (e.g. iOS SABR-only formats)
+        // and this is playback (not raw file download), fall back to the HLS manifest
+        // when provided by the client (such as IOS).
+        if chosenFormat == nil,
+           !options.forDownload,
+           let hlsUrl = streamingData.hlsManifestUrl,
+           !hlsUrl.isEmpty {
+            let videoDetails = response.videoDetails
+            let duration = videoDetails?.lengthSeconds.flatMap(Int.init)
+            let musicVideoType = videoDetails?.musicVideoType
+            if let duration, let resolvedVideoId = videoDetails?.videoId {
+                DurationCache.set(resolvedVideoId, duration)
+            }
+            return PlaybackResult(
+                streamUrl: hlsUrl,
+                itag: 0,
+                mimeType: "application/x-mpegURL",
+                bitrate: 128_000,
+                audioQuality: "AUDIO_QUALITY_MEDIUM",
+                videoId: videoDetails?.videoId ?? videoId,
+                title: videoDetails?.title,
+                author: videoDetails?.author,
+                duration: duration,
+                expiresInSeconds: streamingData.expiresInSeconds.flatMap(Int.init) ?? 0,
+                clientName: client.clientName,
+                userAgent: client.userAgent,
+                musicVideoType: musicVideoType,
+                hasVideoContent: hasVideoContent,
+                muxedStreamUrl: hlsUrl,
+                loudnessDb: nil
+            )
+        }
+
         guard let selectedFormat = chosenFormat, let streamUrl = resolvedStreamUrl else {
             let formatInfos = allFormats.map { format in
                 "itag=\(format.itag ?? 0) mime=\(format.mimeType ?? "?") audio=\(format.audioChannels != nil) " +
@@ -248,7 +281,7 @@ public enum StreamResolver: Sendable {
         let muxedStreamUrl: String? = {
             guard let videoFormat = muxedFormat,
                   let url = videoFormat.url, !url.isEmpty else {
-                return nil
+                return streamingData.hlsManifestUrl
             }
             guard let pot = options.streamingDataPoToken, client.useWebPoTokens else {
                 return url
@@ -268,6 +301,7 @@ public enum StreamResolver: Sendable {
             duration: duration,
             expiresInSeconds: streamingData.expiresInSeconds.flatMap(Int.init) ?? 0,
             clientName: client.clientName,
+            userAgent: client.userAgent,
             musicVideoType: musicVideoType,
             hasVideoContent: hasVideoContent,
             muxedStreamUrl: muxedStreamUrl,
@@ -294,7 +328,7 @@ public enum StreamResolver: Sendable {
 
         SwiftyTubeLog.debug(
             "Result: title=\"\(result.title ?? "?")\" author=\"\(result.author ?? "?")\" " +
-                "itag=\(result.itag) quality=\(result.audioQuality) bitrate=\(result.bitrate)"
+                "itag=\(result.itag) quality=\(result.audioQuality) bitrate=\(result.bitrate) client=\(result.clientName)"
         )
 
         return result
@@ -311,9 +345,10 @@ public enum StreamResolver: Sendable {
         url.contains("?") ? "\(url)&pot=\(encodeQueryValue(pot))" : "\(url)?pot=\(encodeQueryValue(pot))"
     }
 
-    /// 1 KiB Range GET check.
+    /// 1 KiB Range GET check using the resolving client's User-Agent.
     public static func validateStream(
         url: String,
+        userAgent: String? = nil,
         session: URLSession = .shared,
         onStreamRejection: (@Sendable () async -> Void)? = nil
     ) async -> Bool {
@@ -326,6 +361,9 @@ public enum StreamResolver: Sendable {
         request.httpMethod = "GET"
         request.timeoutInterval = 5
         request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+        if let userAgent, !userAgent.isEmpty {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
 
         do {
             let (_, httpResponse) = try await HttpClient.data(for: request, session: session)
