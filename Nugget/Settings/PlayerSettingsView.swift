@@ -15,6 +15,26 @@ struct PlayerSettingsView: View {
 
         List {
             Section {
+                SettingsPickerRow("Player Background", icon: "circle.lefthalf.filled", selection: $settings.playerBackgroundStyle)
+
+                if settings.playerBackgroundStyle == .blur {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("Blur Intensity", systemImage: "aqi.medium")
+                            Spacer()
+                            Text("\(Int((settings.playerBlurIntensity * 100).rounded()))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $settings.playerBlurIntensity, in: 0.1...1.0)
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text("Appearance")
+            }
+
+            Section {
                 SettingsNavigationRow("Equalizer", icon: "slider.vertical.3") {
                     EqualizerView()
                 }
