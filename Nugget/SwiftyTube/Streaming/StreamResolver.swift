@@ -334,9 +334,11 @@ public enum StreamResolver: Sendable {
         return result
     }
 
-    /// Query-escape incl. +, =, &, /.
+    /// Encodes query parameter delimiters so base64 `pot` characters stay intact.
     static func encodeQueryValue(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&=?#%")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     /// Appends the po_token with the right separator (cipher-resolved URLs
