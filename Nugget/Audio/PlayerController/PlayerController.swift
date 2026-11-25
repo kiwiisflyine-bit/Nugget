@@ -633,12 +633,14 @@ extension PlayerController {
         let reason = endFile.reason
         let isEof = reason == MPV_END_FILE_REASON_EOF
         let isError = reason == MPV_END_FILE_REASON_ERROR
+        let mpvErrCode = endFile.error.rawValue
+        let mpvErrMsg = String(cString: mpv_error_string(endFile.error))
         let stoppedVideoId = self.currentVideoId ?? self.pendingVideoId
         Task { @MainActor [weak self] in
             guard let self else { return }
             let videoId = stoppedVideoId
             Log.player.debug(
-                "TRANSITION END_FILE reason=\(reason.rawValue) isEof=\(isEof) isError=\(isError) stoppedVideoId=\(videoId ?? "nil")"
+                "TRANSITION END_FILE reason=\(reason.rawValue) isEof=\(isEof) isError=\(isError) errCode=\(mpvErrCode) errMsg='\(mpvErrMsg)' stoppedVideoId=\(videoId ?? "nil")"
             )
             // Ignore late END_FILE events if a newer track has already replaced it.
             let activeOrPending = self.pendingVideoId ?? self.currentVideoId
