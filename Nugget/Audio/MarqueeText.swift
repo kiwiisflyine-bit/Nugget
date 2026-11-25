@@ -81,7 +81,9 @@ struct MarqueeText: View {
         .accessibilityLabel(text)
         .onChange(of: text) { oldText, newText in
             guard oldText != newText else { return }
-            restart()
+            stop()
+            measuredWidth = 0
+            ensureTask()
         }
     }
 
@@ -106,21 +108,19 @@ struct MarqueeText: View {
 
     // MARK: - Animation task
     private func ensureTask() {
-        // Never spin the infinite loop for non-overflowing text — this was
-        // the "always-animating" churn: a task per MarqueeText that slept
-        // 2s then re-checked forever even when nothing would scroll.
         guard shouldScroll, animationTask == nil else { return }
         startTask()
     }
 
     private func startTask() {
         animationTask?.cancel()
-        // Static text needs no task at all.
+        animationTask = nil
+        resetOffset()
+
         guard shouldScroll else {
-            animationTask = nil
-            resetOffset()
             return
         }
+
         animationTask = Task { @MainActor in
             while !Task.isCancelled {
                 resetOffset()
@@ -153,7 +153,6 @@ struct MarqueeText: View {
     }
 
     private func restart() {
-        // Tearing down first avoids stacking tasks when width/text flaps.
         stop()
         ensureTask()
     }
