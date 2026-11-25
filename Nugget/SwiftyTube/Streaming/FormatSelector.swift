@@ -35,14 +35,14 @@ public enum FormatSelector: Sendable {
         return h264.isEmpty ? formats : h264
     }
 
-    /// Best audio format, optionally restricted to the user's quality tier first.
-    public static func bestAudioFormat(from formats: [Format], preference: AudioQuality = .auto) -> Format? {
+    /// Ordered list of candidate audio formats, starting with best match and falling back cleanly.
+    public static func candidateAudioFormats(from formats: [Format], preference: AudioQuality = .auto) -> [Format] {
         guard !formats.isEmpty else {
             SwiftyTubeLog.debug("No formats to select from")
-            return nil
+            return []
         }
 
-        guard var audioFormats = audioBearingFormats(formats) else { return nil }
+        guard let audioFormats = audioBearingFormats(formats) else { return [] }
 
         let fetchable = audioFormats.filter {
             ($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil
@@ -50,54 +50,56 @@ public enum FormatSelector: Sendable {
         let pool = fetchable.isEmpty ? audioFormats : fetchable
 
         if preference == .aac256 {
+            var candidates: [Format] = []
             // Explicitly prioritize itag == 141 (audio/mp4, 256kbps AAC)
             if let itag141 = pool.first(where: { $0.itag == 141 }) {
-                SwiftyTubeLog.debug("Selected: itag=141 (256 AAC highest)")
-                return itag141
+                candidates.append(itag141)
             }
-            // If itag 141 is unavailable for a track, fall back cleanly to the next highest available M4A/AAC or Opus audio stream
+            // Fall back cleanly to remaining AAC formats sorted by highest bitrate
             let aacFormats = pool.filter { format in
+                guard format.itag != 141 else { return false }
                 let codec = format.codec.lowercased()
                 let mime = format.mimeType?.lowercased() ?? ""
                 return codec.contains("mp4a") || codec.contains("aac") || mime.contains("audio/mp4") || mime.contains("aac")
-            }
-            if let bestAAC = aacFormats.max(by: { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }) {
-                SwiftyTubeLog.debug("itag 141 unavailable, falling back to next highest AAC itag=\(bestAAC.itag ?? 0)")
-                return bestAAC
-            }
-            if let bestAny = pool.max(by: { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }) {
-                SwiftyTubeLog.debug("Falling back to next highest Opus/audio itag=\(bestAny.itag ?? 0)")
-                return bestAny
-            }
+            }.sorted { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
+            candidates.append(contentsOf: aacFormats)
+
+            // Fall back cleanly to Opus / any remaining audio formats sorted by highest bitrate
+            let otherFormats = pool.filter { format in
+                !candidates.contains(where: { $0.itag == format.itag })
+            }.sorted { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
+            candidates.append(contentsOf: otherFormats)
+
+            return candidates
         }
 
+        var tierCandidates: [Format] = []
         if preference != .auto {
             let tier = Self.qualityTier(for: preference)
-            let tierFormats = audioFormats.filter { Self.qualityRank($0.audioQuality) == tier }
-            if !tierFormats.isEmpty {
-                SwiftyTubeLog.debug("Preferring \(preference.rawValue) tier: \(tierFormats.count) format(s)")
-                audioFormats = tierFormats
-            } else {
-                SwiftyTubeLog.debug("No \(preference.rawValue)-tier format, using best available")
-            }
+            tierCandidates = pool.filter { Self.qualityRank($0.audioQuality) == tier }
+                .sorted { formatScore($0) > formatScore($1) }
         }
 
-        SwiftyTubeLog.debug("Selecting from \(audioFormats.count) audio-bearing formats")
+        let remaining = pool.filter { format in
+            !tierCandidates.contains(where: { $0.itag == format.itag })
+        }.sorted { formatScore($0) > formatScore($1) }
 
-        let selected = audioFormats.max { a, b in
-            formatScore(a) < formatScore(b)
-        }
+        return tierCandidates + remaining
+    }
 
-        if let selected {
-            SwiftyTubeLog.debug(
-                "Selected: itag=\(selected.itag ?? 0) quality=\(selected.audioQuality ?? "?")" +
-                    " channels=\(selected.audioChannels ?? 0) codec=\(selected.codec)" +
-                    " bitrate=\(selected.bitrate ?? 0)"
-            )
-        } else {
+    /// Best audio format, optionally restricted to the user's quality tier first.
+    public static func bestAudioFormat(from formats: [Format], preference: AudioQuality = .auto) -> Format? {
+        let candidates = candidateAudioFormats(from: formats, preference: preference)
+        guard let selected = candidates.first else {
             SwiftyTubeLog.debug("No format could be selected")
+            return nil
         }
 
+        SwiftyTubeLog.debug(
+            "Selected audio: itag=\(selected.itag ?? 0) quality=\(selected.audioQuality ?? "?")" +
+                " channels=\(selected.audioChannels ?? 0) codec=\(selected.codec)" +
+                " bitrate=\(selected.bitrate ?? 0)"
+        )
         return selected
     }
 
@@ -221,7 +223,7 @@ public enum FormatSelector: Sendable {
             !$0.isAudioOnly
                 && $0.width != nil && $0.height != nil
                 && $0.audioChannels != nil
-                && $0.url != nil
+                && (($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil)
         }
 
         guard !muxedFormats.isEmpty else {
@@ -275,7 +277,7 @@ public enum FormatSelector: Sendable {
             !$0.isAudioOnly
                 && $0.width != nil && $0.height != nil
                 && $0.audioChannels == nil
-                && $0.url != nil
+                && (($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil)
         }
 
         guard !videoOnlyFormats.isEmpty else {
