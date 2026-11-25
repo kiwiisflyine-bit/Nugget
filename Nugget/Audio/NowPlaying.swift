@@ -82,8 +82,10 @@ final class NowPlaying {
     var audioBadge: String?
     var is256AAC: Bool = false
 
-    /// Timestamps of the last mid-play failure per videoId, to bound retries.
-    private var lastFailureAt: [String: Date] = [:]
+    /// Recent mid-play failure timestamps per videoId, to cap retry loops.
+    private var recentFailures: [String: [Date]] = [:]
+    private static let maxRecoveryAttempts = 2
+    private static let recoveryWindowSeconds: TimeInterval = 60
 
     private static let queueKey = "nowPlaying.queue"
     private static let queueIndexKey = "nowPlaying.queueIndex"
@@ -426,8 +428,7 @@ final class NowPlaying {
     }
 
     /// A stream that died mid-play (not EOF, not a manual skip): drop the
-    /// possibly-expired cached URL and re-resolve once. Repeated failures for
-    /// the same video are only retried after a cooldown to avoid a loop.
+    /// possibly-expired cached URL and re-resolve with a bounded retry count.
     private func recoverFromPlaybackFailure(videoId: String?) {
         guard let videoId else {
             isPlaying = false
@@ -435,7 +436,21 @@ final class NowPlaying {
             return
         }
         PlayerController.shared.handleVideoStreamFailure()
-        if let last = lastFailureAt[videoId], Date().timeIntervalSince(last) < 30 {
+
+        // If playback never progressed past 0.5s, the resolved URL was rejected
+        // immediately rather than expiring mid-play; do not spin in a tight loop.
+        let livePos = PlayerController.shared.currentTime
+        let progressed = max(currentTime, livePos) > 0.5
+
+        let now = Date()
+        let activeWindow = (recentFailures[videoId] ?? []).filter {
+            now.timeIntervalSince($0) < Self.recoveryWindowSeconds
+        }
+        if !progressed || activeWindow.count >= Self.maxRecoveryAttempts {
+            recentFailures[videoId] = activeWindow + [now]
+            Log.nowPlaying.notice(
+                "Stream failed for \(videoId) (progressed=\(progressed), attempts=\(activeWindow.count)); stopping recovery loop"
+            )
             PlayerController.shared.stop()
             if self.videoId == videoId {
                 isPlaying = false
@@ -443,7 +458,8 @@ final class NowPlaying {
             }
             return
         }
-        lastFailureAt[videoId] = Date()
+
+        recentFailures[videoId] = activeWindow + [now]
         isPlaying = false
         currentTime = 0
         Log.nowPlaying.notice("Stream failed mid-play, re-resolving \(videoId)")
@@ -452,8 +468,7 @@ final class NowPlaying {
             await StreamCache.shared.remove(videoId: videoId)
             do {
                 try await PlaybackManager.shared.resolveAndPlay(videoId: videoId)
-                // Success – allow future retries for this video
-                _ = await MainActor.run { self.lastFailureAt.removeValue(forKey: videoId) }
+                _ = await MainActor.run { self.recentFailures.removeValue(forKey: videoId) }
             } catch {
                 Log.nowPlaying.error("Mid-play recovery failed: \(error)")
                 PlayerController.shared.stop()
