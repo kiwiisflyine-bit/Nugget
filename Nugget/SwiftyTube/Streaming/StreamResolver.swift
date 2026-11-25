@@ -145,14 +145,16 @@ public enum StreamResolver: Sendable {
 
         if playabilityStatus.status != "OK" {
             let reason = playabilityStatus.reason ?? "Unknown"
+            let hasFormats = (response.streamingData?.formats?.isEmpty == false) ||
+                (response.streamingData?.adaptiveFormats?.isEmpty == false)
             // Tolerate non-OK clients that still return formats.
-            guard client.skipPlayerResponseValidation else {
-                SwiftyTubeLog.error("Not playable: status=\(playabilityStatus.status ?? "?") reason=\(reason)")
+            guard client.skipPlayerResponseValidation || hasFormats else {
+                SwiftyTubeLog.error("[\(client.clientName)] Not playable: status=\(playabilityStatus.status ?? "?") reason=\(reason)")
                 throw StreamError.unplayable(reason: reason)
             }
-            SwiftyTubeLog.notice("Status=\(playabilityStatus.status ?? "?") (\(reason)) - attempting formats anyway")
+            SwiftyTubeLog.notice("[\(client.clientName)] Status=\(playabilityStatus.status ?? "?") (\(reason)) - attempting formats anyway (hasFormats=\(hasFormats))")
         } else {
-            SwiftyTubeLog.debug("Playable: status=OK")
+            SwiftyTubeLog.debug("[\(client.clientName)] Playable: status=OK")
         }
 
         guard let streamingData = response.streamingData else {
@@ -172,45 +174,64 @@ public enum StreamResolver: Sendable {
                 "video formats: \(allFormats.filter { $0.width != nil }.count))"
         )
 
-        let selectedFormat: Format
+        let candidates: [Format]
         if let preferred = options.preferredFormat,
            let fresh = allFormats.first(where: { $0.itag == preferred.itag }) {
-            selectedFormat = fresh
+            candidates = [fresh]
             SwiftyTubeLog.debug("Using preferred format itag=\(preferred.itag ?? 0)")
-        } else if options.forDownload,
-                  let downloadFormat = FormatSelector.bestDownloadFormat(
-                      from: allFormats,
-                      downloadQuality: options.downloadQuality
-                  ) {
-            selectedFormat = downloadFormat
-        } else if let best = FormatSelector.bestAudioFormat(
-            from: allFormats,
-            preference: options.audioQuality
-        ) {
-            selectedFormat = best
+        } else if options.forDownload {
+            if let downloadFormat = FormatSelector.bestDownloadFormat(
+                from: allFormats,
+                downloadQuality: options.downloadQuality
+            ) {
+                candidates = [downloadFormat]
+            } else {
+                candidates = []
+            }
         } else {
+            candidates = FormatSelector.candidateAudioFormats(
+                from: allFormats,
+                preference: options.audioQuality
+            )
+        }
+
+        var chosenFormat: Format?
+        var resolvedStreamUrl: String?
+        var lastResolveError: Error?
+
+        for candidate in candidates {
+            if let url = candidate.url, !url.isEmpty {
+                chosenFormat = candidate
+                resolvedStreamUrl = url
+                SwiftyTubeLog.debug("Direct URL selected for itag=\(candidate.itag ?? 0): \(url.prefix(120))...")
+                break
+            } else if let cipherText = candidate.signatureCipher ?? candidate.cipher {
+                SwiftyTubeLog.debug("Format itag=\(candidate.itag ?? 0) requires cipher deobfuscation")
+                guard let cipherURL = providers.cipherURL, let playerJs = providers.playerJs else {
+                    lastResolveError = StreamError.noStreamUrl
+                    continue
+                }
+                do {
+                    let playerJsContent = try await playerJs()
+                    let url = try await cipherURL(cipherText, playerJsContent)
+                    chosenFormat = candidate
+                    resolvedStreamUrl = url
+                    SwiftyTubeLog.debug("Resolved cipher URL for itag=\(candidate.itag ?? 0): \(url.prefix(120))...")
+                    break
+                } catch {
+                    lastResolveError = error
+                    SwiftyTubeLog.notice("Cipher deobfuscation failed for itag=\(candidate.itag ?? 0): \(error). Trying next candidate.")
+                }
+            }
+        }
+
+        guard let selectedFormat = chosenFormat, let streamUrl = resolvedStreamUrl else {
             let formatInfos = allFormats.map { format in
                 "itag=\(format.itag ?? 0) mime=\(format.mimeType ?? "?") audio=\(format.audioChannels != nil) " +
                     "url=\(format.url != nil) cipher=\(format.signatureCipher != nil || format.cipher != nil)"
             }
-            SwiftyTubeLog.error("No suitable format. Formats: \(formatInfos.joined(separator: ", "))")
-            throw StreamError.noSuitableFormat
-        }
-
-        let streamUrl: String
-        if let url = selectedFormat.url, !url.isEmpty {
-            streamUrl = url
-            SwiftyTubeLog.debug("Direct URL: \(streamUrl.prefix(120))...")
-        } else if let cipherText = selectedFormat.signatureCipher ?? selectedFormat.cipher {
-            SwiftyTubeLog.debug("Format requires cipher deobfuscation")
-            guard let cipherURL = providers.cipherURL, let playerJs = providers.playerJs else {
-                throw StreamError.noStreamUrl
-            }
-            let playerJsContent = try await playerJs()
-            streamUrl = try await cipherURL(cipherText, playerJsContent)
-            SwiftyTubeLog.debug("Resolved cipher URL: \(streamUrl.prefix(120))...")
-        } else {
-            throw StreamError.noStreamUrl
+            SwiftyTubeLog.error("No suitable playable format. Formats: \(formatInfos.joined(separator: ", "))")
+            throw lastResolveError ?? StreamError.noSuitableFormat
         }
 
         var finalStreamUrl = streamUrl
