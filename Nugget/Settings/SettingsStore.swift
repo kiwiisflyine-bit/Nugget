@@ -28,16 +28,16 @@ enum ThemeMode: String, CaseIterable, Identifiable, SettingsOption {
 }
 
 enum PlayerBackgroundStyle: String, CaseIterable, Identifiable, SettingsOption {
-    case opaque
-    case blurTransparent
+    case tinted
+    case blur
     case solid
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .opaque: return "Opaque"
-        case .blurTransparent: return "Blur Transparent"
+        case .tinted: return "Tinted"
+        case .blur: return "Blur"
         case .solid: return "Solid"
         }
     }
@@ -153,6 +153,10 @@ final class SettingsStore {
 
     var playerBackgroundStyle: PlayerBackgroundStyle {
         didSet { Self.defaults.set(playerBackgroundStyle.rawValue, forKey: Keys.playerBackgroundStyle) }
+    }
+
+    var playerBlurIntensity: Double {
+        didSet { Self.defaults.set(playerBlurIntensity, forKey: Keys.playerBlurIntensity) }
     }
 
     var preferredColorScheme: ColorScheme? {
@@ -341,6 +345,7 @@ final class SettingsStore {
         static let themeMode = "settings.themeMode"
         static let accentName = "settings.accentName"
         static let playerBackgroundStyle = "settings.playerBackgroundStyle"
+        static let playerBlurIntensity = "settings.playerBlurIntensity"
         static let defaultTab = "settings.defaultTab"
         static let lyricsFontSize = "settings.lyricsFontSize"
         static let lyricsAlignment = "settings.lyricsAlignment"
@@ -391,11 +396,20 @@ final class SettingsStore {
     }
 
     private static func loadEnum<E: RawRepresentable>(_ key: String, default defaultValue: E) -> E where E.RawValue == String {
-        if let raw = defaults.string(forKey: key), raw == "dynamic",
-           let opaque = E(rawValue: "opaque") {
-            return opaque
+        let raw = defaults.string(forKey: key) ?? ""
+        if E.self == PlayerBackgroundStyle.self {
+            switch raw {
+            case "dynamic", "opaque", "tinted":
+                return (PlayerBackgroundStyle.tinted as? E) ?? defaultValue
+            case "blurTransparent", "blur":
+                return (PlayerBackgroundStyle.blur as? E) ?? defaultValue
+            case "solid":
+                return (PlayerBackgroundStyle.solid as? E) ?? defaultValue
+            default:
+                break
+            }
         }
-        return E(rawValue: defaults.string(forKey: key) ?? "") ?? defaultValue
+        return E(rawValue: raw) ?? defaultValue
     }
 
     private init() {
@@ -405,7 +419,8 @@ final class SettingsStore {
             .first { $0.name == (d.string(forKey: Keys.accentName) ?? AccentPreset.all[0].name) }?
             .color ?? AccentPreset.all[0].color
         accentName = d.string(forKey: Keys.accentName) ?? AccentPreset.all[0].name
-        playerBackgroundStyle = Self.loadEnum(Keys.playerBackgroundStyle, default: .opaque)
+        playerBackgroundStyle = Self.loadEnum(Keys.playerBackgroundStyle, default: .tinted)
+        playerBlurIntensity = min(1.0, max(0.1, Self.load(Keys.playerBlurIntensity, default: 0.6)))
         let storedTab = Self.load(Keys.defaultTab, default: 0)
         defaultTab = storedTab == 2 ? 3 : storedTab
         lyricsFontSize = Self.load(Keys.lyricsFontSize, default: 17)
