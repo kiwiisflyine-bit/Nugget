@@ -87,8 +87,8 @@ final class NowPlaying {
     private static let maxRecoveryAttempts = 2
     private static let recoveryWindowSeconds: TimeInterval = 60
 
-    private static let maxArtworkPixelDimension: CGFloat = 1200
-    private static let preferredMinArtworkDimension: CGFloat = 300
+    private nonisolated static let maxArtworkPixelDimension: CGFloat = 1200
+    private nonisolated static let preferredMinArtworkDimension: CGFloat = 300
 
     private static let queueKey = "nowPlaying.queue"
     private static let queueIndexKey = "nowPlaying.queueIndex"
@@ -539,11 +539,12 @@ final class NowPlaying {
 
     /// Publishes a loaded image as the current artwork, preserving aspect ratio.
     private func publishArtwork(_ image: UIImage) {
-        Task.detached(priority: .userInitiated) { [weak self, videoId = self.videoId] in
+        let targetVideoId = self.videoId
+        Task.detached(priority: .userInitiated) { [weak self] in
             let prepared = Self.prepareArtwork(image)
             let colors = prepared.extractDominantColors()
             await MainActor.run {
-                guard let self, self.videoId == videoId else { return }
+                guard let self, self.videoId == targetVideoId else { return }
                 self.thumbnailUIImage = prepared
                 self.thumbnailImage = Image(uiImage: prepared)
                 self.thumbnailVersion &+= 1
