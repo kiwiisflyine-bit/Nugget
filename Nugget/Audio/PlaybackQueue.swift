@@ -16,11 +16,8 @@ enum PlaybackQueue {
     static func play(_ songs: [SongItem], startIndex: Int = 0, log: AppLogger, context: String) {
         guard !songs.isEmpty else { return }
         let index = min(max(startIndex, 0), songs.count - 1)
-        let first = songs[index]
         NowPlaying.shared.setQueue(songs, startIndex: index)
-        loggedTask(log, "\(context) failed") {
-            try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId)
-        }
+        NowPlaying.shared.playCurrentSong(logContext: context)
     }
 
     /// Shuffled variant of `play(_:startIndex:)`.
@@ -45,7 +42,7 @@ enum PlaybackQueue {
         let isCurrentSong = NowPlaying.shared.videoId == song.videoId
         if !isCurrentSong {
             NowPlaying.shared.setQueue([song], startIndex: 0)
-            Task { try? await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId) }
+            NowPlaying.shared.playCurrentSong(logContext: "startRadio")
         }
         Task {
             guard let radio = try? await PersonalizationService.shared.fetchRadio(videoId: song.videoId, options: options),
@@ -60,13 +57,8 @@ enum PlaybackQueue {
     /// Used by Home/Search/Explore tap-to-play.
     static func playSingleWithRadio(_ song: SongItem, log: AppLogger) {
         NowPlaying.shared.setQueue([song], startIndex: 0)
+        NowPlaying.shared.playCurrentSong(logContext: "playSingleWithRadio")
         Task { @MainActor in
-            do {
-                try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId)
-            } catch {
-                log.error("Playback failed: \(error)")
-                return
-            }
             guard let radio = try? await PersonalizationService.shared.fetchRadio(videoId: song.videoId),
                   radio.songs.count > 1,
                   NowPlaying.shared.videoId == song.videoId else { return }
