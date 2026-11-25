@@ -159,6 +159,10 @@ final class SettingsStore {
         didSet { Self.defaults.set(playerBlurIntensity, forKey: Keys.playerBlurIntensity) }
     }
 
+    var playerTransparentIntensity: Double {
+        didSet { Self.defaults.set(playerTransparentIntensity, forKey: Keys.playerTransparentIntensity) }
+    }
+
     var preferredColorScheme: ColorScheme? {
         switch themeMode {
         case .system: return nil
@@ -346,6 +350,7 @@ final class SettingsStore {
         static let accentName = "settings.accentName"
         static let playerBackgroundStyle = "settings.playerBackgroundStyle"
         static let playerBlurIntensity = "settings.playerBlurIntensity"
+        static let playerTransparentIntensity = "settings.playerTransparentIntensity"
         static let defaultTab = "settings.defaultTab"
         static let lyricsFontSize = "settings.lyricsFontSize"
         static let lyricsAlignment = "settings.lyricsAlignment"
@@ -421,6 +426,7 @@ final class SettingsStore {
         accentName = d.string(forKey: Keys.accentName) ?? AccentPreset.all[0].name
         playerBackgroundStyle = Self.loadEnum(Keys.playerBackgroundStyle, default: .tinted)
         playerBlurIntensity = min(1.0, max(0.1, Self.load(Keys.playerBlurIntensity, default: 0.6)))
+        playerTransparentIntensity = min(1.0, max(0.0, Self.load(Keys.playerTransparentIntensity, default: 0.35)))
         let storedTab = Self.load(Keys.defaultTab, default: 0)
         defaultTab = storedTab == 2 ? 3 : storedTab
         lyricsFontSize = Self.load(Keys.lyricsFontSize, default: 17)
