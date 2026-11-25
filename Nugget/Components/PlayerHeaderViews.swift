@@ -8,21 +8,29 @@
 import SwiftUI
 
 /// Title + artist marquee block shared by the FullPlayer, Queue and Lyrics
-/// header rows.
+/// header rows with audio quality badge support.
 struct PlayerTitleBlock: View {
     var title: String
     var artist: String
     var spacing: CGFloat = 2
     var titleFont: Font = .body.weight(.semibold)
     var titleHeight: CGFloat = 24
+    var badge: String? = nil
+    var is256AAC: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            MarqueeText(
-                text: title,
-                font: titleFont,
-                frameHeight: titleHeight
-            )
+            HStack(alignment: .center, spacing: 6) {
+                MarqueeText(
+                    text: title,
+                    font: titleFont,
+                    frameHeight: titleHeight
+                )
+
+                if let badge, !badge.isEmpty {
+                    AudioQualityBadge(badge: badge, is256AAC: is256AAC, isPlayerSurface: true)
+                }
+            }
 
             if !artist.isEmpty {
                 Text(artist)
