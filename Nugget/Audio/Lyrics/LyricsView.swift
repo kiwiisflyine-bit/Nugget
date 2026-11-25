@@ -11,6 +11,7 @@ struct LyricsView<ProgressSlider: View>: View {
     private let np = NowPlaying.shared
     private let player = PlayerController.shared
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.colorScheme) private var environmentColorScheme
 
     @Binding var showLyrics: Bool
     let pendingRoute: Binding<DetailRoute?>
@@ -37,6 +38,22 @@ struct LyricsView<ProgressSlider: View>: View {
     @State private var hasPositionedInitialLyrics = false
     @State private var scrollProxy: ScrollViewProxy?
 
+    private var activeColorScheme: ColorScheme {
+        settings.preferredColorScheme ?? environmentColorScheme
+    }
+
+    private var isLightTheme: Bool {
+        activeColorScheme == .light
+    }
+
+    private var primaryForeground: Color {
+        isLightTheme ? .black : .white
+    }
+
+    private var secondaryForeground: Color {
+        isLightTheme ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
+    }
+
     private var isLiked: Bool {
         guard let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil else { return false }
         return likeStore.isLiked(videoId: song.videoId)
@@ -52,6 +69,9 @@ struct LyricsView<ProgressSlider: View>: View {
 
             playbackControls
         }
+        .foregroundStyle(primaryForeground)
+        .tint(primaryForeground)
+        .environment(\.colorScheme, activeColorScheme)
         .ignoresSafeArea(edges: .bottom)
         .simultaneousGesture(swipeBackGesture)
         .sheet(isPresented: $showSongMenu) {
@@ -115,7 +135,7 @@ struct LyricsView<ProgressSlider: View>: View {
                             if let provider = LyricsState.shared.providerName {
                                 Text("Lyrics from \(provider)")
                                     .font(.caption.weight(.medium))
-                                    .foregroundStyle(.white.opacity(0.6))
+                                    .foregroundStyle(secondaryForeground)
                                     .frame(maxWidth: .infinity, alignment: settings.lyricsAlignment.textAlignment)
                                     .padding(.horizontal, 24)
                             }
@@ -171,10 +191,10 @@ struct LyricsView<ProgressSlider: View>: View {
                 Text("Re-sync")
                     .font(.system(size: 14, weight: .semibold))
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(primaryForeground)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(Capsule().fill(.white.opacity(0.15)))
+            .background(Capsule().fill(primaryForeground.opacity(0.14)))
         }
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .padding(.bottom, 16)
@@ -240,6 +260,8 @@ struct LyricsView<ProgressSlider: View>: View {
                 isActive: index == activeIndex,
                 alignment: settings.lyricsAlignment,
                 fontSize: settings.lyricsFontSize,
+                textColor: primaryForeground,
+                secondaryTextColor: secondaryForeground,
                 lineOpacity: index == activeIndex ? 1 : opacityForDistance(abs(index - activeIndex)),
                 lineScale: index == activeIndex ? 1 : scaleForDistance(abs(index - activeIndex)),
                 romanizedText: romanized,
@@ -265,14 +287,14 @@ struct LyricsView<ProgressSlider: View>: View {
         .animation(.easeInOut(duration: 0.2), value: showRing)
     }
 
-    /// Accent color for solid backgrounds; white on tinted / blur
+    /// Accent color for solid backgrounds; foreground ink on tinted / blur
     /// album art backgrounds.
     private var intervalIndicatorColor: Color {
         switch settings.playerBackgroundStyle {
         case .solid:
             return settings.accentColor
         case .tinted, .blur:
-            return .white
+            return primaryForeground
         }
     }
 
@@ -373,16 +395,22 @@ struct LyricsView<ProgressSlider: View>: View {
             } else {
                 Image(systemName: "music.note")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(primaryForeground.opacity(0.4))
                     .frame(width: 64, height: 64)
             }
 
-            PlayerTitleBlock(title: np.title, artist: np.displayArtist)
+            PlayerTitleBlock(
+                title: np.title,
+                artist: np.displayArtist,
+                titleColor: primaryForeground,
+                artistColor: secondaryForeground
+            )
 
             Spacer()
 
             PlayerLikeButton(
                 isLiked: isLiked,
+                inactiveColor: primaryForeground,
                 fontSize: 18
             ) {
                 guard let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil else { return }
@@ -390,7 +418,7 @@ struct LyricsView<ProgressSlider: View>: View {
             }
 
             if np.queueSongs.indices.contains(np.queueIndex) {
-                PlayerOptionsButton(color: .white.opacity(0.6)) {
+                PlayerOptionsButton(color: secondaryForeground) {
                     showSongMenu = true
                 }
             }
@@ -534,6 +562,8 @@ private struct LyricsLineView: View {
     let isActive: Bool
     let alignment: LyricsAlignment
     let fontSize: Double
+    var textColor: Color = .white
+    var secondaryTextColor: Color = Color.white.opacity(0.65)
     var lineOpacity: Double = 1
     var lineScale: CGFloat = 1
     /// Romanized variant rendered under the main line, Metrolist-style.
@@ -547,13 +577,13 @@ private struct LyricsLineView: View {
             VStack(alignment: alignment.textAlignment.horizontal, spacing: 4) {
                 Text(textToDisplay)
                     .font(.system(size: fontSize, weight: isActive ? .bold : .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(textColor)
                     .multilineTextAlignment(alignment.multilineTextAlignment)
 
                 if let romanizedText, !romanizedText.isEmpty {
                     Text(romanizedText)
                         .font(.system(size: max(12, fontSize * 0.55), weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.65))
+                        .foregroundStyle(secondaryTextColor)
                         .multilineTextAlignment(alignment.multilineTextAlignment)
                 }
             }
