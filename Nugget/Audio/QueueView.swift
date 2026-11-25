@@ -137,7 +137,12 @@ struct QueueView<ProgressSlider: View>: View {
                     .frame(width: 64, height: 64)
             }
 
-            PlayerTitleBlock(title: np.title, artist: np.displayArtist)
+            PlayerTitleBlock(
+                title: np.title,
+                artist: np.displayArtist,
+                badge: np.audioBadge,
+                is256AAC: np.is256AAC
+            )
 
             Spacer()
 
@@ -286,11 +291,7 @@ struct QueueView<ProgressSlider: View>: View {
             }
             let nextIndex = min(index, np.queueSongs.count - 1)
             np.queueIndex = nextIndex
-            let song = np.queueSongs[nextIndex]
-            np.update(with: song)
-            loggedTask(Log.nowPlaying, "removeSong auto-play failed") {
-                try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId)
-            }
+            np.playCurrentSong(logContext: "removeSong auto-play")
         } else {
             np.repairQueueIndex()
         }
