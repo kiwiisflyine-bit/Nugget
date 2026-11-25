@@ -160,6 +160,7 @@ public enum StreamFallback: Sendable {
                 if request.policy.validateStreams, !entry.skipValidation {
                     let valid = await StreamResolver.validateStream(
                         url: result.streamUrl,
+                        userAgent: result.userAgent,
                         onStreamRejection: providers.onStreamRejection
                     )
                     guard valid else {
