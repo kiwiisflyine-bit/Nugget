@@ -41,6 +41,8 @@ final class PlayerController {
     private var detectedCropRepeatCount = 0
     var currentLoudnessDb: Double?
     var pendingURL: String?
+    var pendingUserAgent: String?
+    var pendingClientName: String?
     nonisolated(unsafe) var desiredPlaying = false
     private var wasPlayingBeforeInterruption = false
 
@@ -166,6 +168,8 @@ extension PlayerController {
         currentVideoId = nil
         pendingVideoId = nil
         pendingURL = nil
+        pendingUserAgent = nil
+        pendingClientName = nil
         loadedMuxedURL = nil
         loadedVideoOnlyURL = nil
         voWarmedVideoId = nil
@@ -193,6 +197,8 @@ extension PlayerController {
         artists: [YTArtist] = [],
         loudnessDb: Double? = nil,
         thumbnailUrl: String? = nil,
+        userAgent: String? = nil,
+        clientName: String? = nil,
         loadToken: UUID? = nil
     ) async {
         if let loadToken {
@@ -246,6 +252,8 @@ extension PlayerController {
             Log.player.info("mpv not ready yet, parking URL for deferred load")
             pendingURL = url.absoluteString
             pendingVideoId = videoId
+            pendingUserAgent = userAgent
+            pendingClientName = clientName
             return
         }
 
@@ -258,10 +266,11 @@ extension PlayerController {
             ? ["loadfile", url.absoluteString, "replace", "-1", "start=\(loadStart)"]
             : ["loadfile", url.absoluteString, "replace"]
         Log.player.info(
-            "TRANSITION play videoId=\(videoId ?? "nil") isNewSong=\(isNewSong) muxedActive=\(muxedActive) "
+            "TRANSITION play videoId=\(videoId ?? "nil") client=\(clientName ?? "nil") isNewSong=\(isNewSong) muxedActive=\(muxedActive) "
                 + "url=\(url.absoluteString.prefix(80))"
         )
         let cmdResult = withMpv { mpv -> Int32 in
+            Self.applyStreamHeaders(mpv, userAgent: userAgent, clientName: clientName, isRemote: url.scheme != "file")
             mpv_set_property_string(mpv, "pause", "no")
             return loadArguments.withUnsafeCArg { mpv_command(mpv, $0) }
         } ?? -1
@@ -280,6 +289,31 @@ extension PlayerController {
         NowPlaying.shared.currentTime = 0
         NowPlaying.shared.duration = max(0, duration ?? 0)
         setNowPlayingMetadata()
+    }
+
+    nonisolated private static func applyStreamHeaders(
+        _ mpv: OpaquePointer,
+        userAgent: String?,
+        clientName: String?,
+        isRemote: Bool
+    ) {
+        guard isRemote else {
+            mpv_set_property_string(mpv, "user-agent", "libmpv")
+            mpv_set_property_string(mpv, "http-header-fields", "")
+            return
+        }
+        if let userAgent, !userAgent.isEmpty {
+            mpv_set_property_string(mpv, "user-agent", userAgent)
+        } else {
+            mpv_set_property_string(mpv, "user-agent", "libmpv")
+        }
+        if clientName == "WEB_MUSIC" || clientName == "WEB_REMIX" {
+            mpv_set_property_string(mpv, "http-header-fields", "Origin: https://music.youtube.com,Referer: https://music.youtube.com/")
+        } else if clientName == "WEB" || clientName == "TVHTML5" || clientName == "TVHTML5_SIMPLY_EMBEDDED_PLAYER" {
+            mpv_set_property_string(mpv, "http-header-fields", "Origin: https://www.youtube.com,Referer: https://www.youtube.com/")
+        } else {
+            mpv_set_property_string(mpv, "http-header-fields", "")
+        }
     }
 
     func seek(to time: TimeInterval) {
@@ -395,9 +429,14 @@ extension PlayerController {
                 guard let self else { return }
                 self.applyPlaybackSettings()
                 if let url = self.pendingURL {
+                    let ua = self.pendingUserAgent
+                    let client = self.pendingClientName
                     self.pendingURL = nil
+                    self.pendingUserAgent = nil
+                    self.pendingClientName = nil
                     Log.player.info("mpv ready: loading deferred URL \(url.prefix(80))")
                     _ = self.withMpv { mpv in
+                        Self.applyStreamHeaders(mpv, userAgent: ua, clientName: client, isRemote: !url.hasPrefix("file://"))
                         mpv_set_property_string(mpv, "pause", "no")
                         return ["loadfile", url, "replace"].withUnsafeCArg { mpv_command(mpv, $0) }
                     }
@@ -419,7 +458,7 @@ extension PlayerController {
         mpv_set_option_string(mpv, "vo", "null")
         mpv_set_option_string(mpv, "vid", "no")
         mpv_set_option_string(mpv, "force-window", "no")
-        mpv_set_option_string(mpv, "msg-level", "all=error")
+        mpv_set_option_string(mpv, "msg-level", "all=warn")
 
         #if targetEnvironment(simulator)
         mpv_set_option_string(mpv, "hwdec", "no")
@@ -513,12 +552,14 @@ extension PlayerController {
             Log.player.debug("TRANSITION FILE_LOADED videoId=\(pendingVideoId ?? "nil") playing=\(actuallyPlaying)")
             self.playState.send(actuallyPlaying ? .playing : .paused)
             NowPlaying.shared.isPlaying = actuallyPlaying
-            self.currentVideoId = pendingVideoId
-            self.pendingVideoId = nil
+            if let pendingVideoId {
+                self.currentVideoId = pendingVideoId
+                self.pendingVideoId = nil
+            }
             self.assertAudioSession()
             self.setNowPlayingMetadata()
             self.applyPendingResumeIfNeeded()
-            let checkId = pendingVideoId
+            let checkId = self.currentVideoId
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard self.currentVideoId == checkId else { return }
@@ -548,8 +589,6 @@ extension PlayerController {
                     let ok = self.muxedActive && NowPlaying.shared.videoId == self.muxedVideoId
                     guard ok else { return }
                     if self.hasPresentedVideo { self.clearVideoLayer() }
-                    // Only the flip owns the mount; background prerender must
-                    // never pop the UI (ready is still recorded below).
                     if self.videoModeSwitchInFlight { NowPlaying.shared.isVideoMode = true }
                     self.hasPresentedVideo = true
                 }
@@ -601,6 +640,12 @@ extension PlayerController {
             Log.player.debug(
                 "TRANSITION END_FILE reason=\(reason.rawValue) isEof=\(isEof) isError=\(isError) stoppedVideoId=\(videoId ?? "nil")"
             )
+            // Ignore late END_FILE events if a newer track has already replaced it.
+            let activeOrPending = self.pendingVideoId ?? self.currentVideoId
+            if let videoId, let activeOrPending, videoId != activeOrPending {
+                Log.player.debug("END_FILE ignored for superseded videoId=\(videoId) (active=\(activeOrPending))")
+                return
+            }
             if isError, videoId != nil {
                 Task { await PlaybackStateService.shared.stopTracking() }
             }
@@ -608,8 +653,8 @@ extension PlayerController {
                 self.playState.send(.stopped)
                 NowPlaying.shared.stopped(videoId: videoId, isEof: true)
             } else if isError {
-                self.currentVideoId = nil
-                self.pendingVideoId = nil
+                if self.currentVideoId == videoId { self.currentVideoId = nil }
+                if self.pendingVideoId == videoId { self.pendingVideoId = nil }
                 self.playState.send(.stopped)
                 NowPlaying.shared.stopped(videoId: videoId, isEof: false)
             } else {
@@ -623,7 +668,6 @@ extension PlayerController {
 
 extension PlayerController {
     func setVideoMode() {
-        // No real video (e.g. art-track): stay in the big player, do nothing.
         guard NowPlaying.shared.hasVideo else { return }
         guard let videoId = NowPlaying.shared.videoId else { return }
         if muxedActive {
@@ -714,7 +758,6 @@ extension PlayerController {
 
     private func attachVideoTrack(videoId: String) async -> Bool {
         do {
-            // Already initialized at the right size by preload? Don't churn.
             if voWarmedVideoId != videoId || videoLayerDrifted() {
                 setVideoTrack()
             }
@@ -736,7 +779,6 @@ extension PlayerController {
             muxedVideoId = videoId
             muxedActive = true
             voInitDrawableSize = videoLayer.drawableSize
-            // video-add starts at 0 while audio is live — seek both to now.
             let syncAt = currentTime
             videoFlipAwaitingRestart = true
             let seekResult = withMpv { mpv in
@@ -1195,8 +1237,6 @@ extension PlayerController {
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Keep the audio session alive while the screen is locked so
-                // auto-advance can keep playing without user interaction.
                 if self.desiredPlaying {
                     self.assertAudioSession()
                 }
