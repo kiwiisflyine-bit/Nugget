@@ -65,6 +65,12 @@ final class NowPlaying {
     private var timer: Timer?
     var lastManualSkipTime: Date?
     private var isResolvingNext = false
+    private var currentLoadTask: Task<Void, Never>?
+    private(set) var currentLoadToken = UUID()
+
+    var audioBadge: String?
+    var is256AAC: Bool = false
+
     /// Timestamps of the last mid-play failure per videoId, to bound retries.
     private var lastFailureAt: [String: Date] = [:]
 
@@ -199,7 +205,6 @@ final class NowPlaying {
 
     func playNext(automatic: Bool = false) {
         guard hasNext else { return }
-        guard !isResolvingNext else { return }
         if !automatic { lastManualSkipTime = Date() }
         queueIndex += 1
         playCurrentSong(logContext: "playNext")
@@ -207,44 +212,65 @@ final class NowPlaying {
 
     func playPrevious() {
         guard hasPrevious else { return }
-        guard !isResolvingNext else { return }
         lastManualSkipTime = Date()
         queueIndex -= 1
         playCurrentSong(logContext: "playPrevious")
     }
 
     /// Starts the song at `queueIndex`: pushes metadata, persists the queue,
-    /// and resolves the stream, clearing `isResolvingNext` afterwards.
-    /// Shared by repeatCurrent/playNext/playPrevious and QueueView playback.
+    /// and resolves the stream guarded by a generation token check.
+    /// Cancels previous stale load tasks and cleanly halts stale playback on failure.
     func playCurrentSong(
         logContext: String,
         manageResolvingFlag: Bool = true,
         afterResolve: (() -> Void)? = nil
     ) {
         guard queueSongs.indices.contains(queueIndex) else { return }
+        currentLoadTask?.cancel()
+
+        let token = UUID()
+        currentLoadToken = token
+
         if manageResolvingFlag {
             isResolvingNext = true
         }
         let song = queueSongs[queueIndex]
         update(with: song)
         persistQueueState()
-        Task {
+
+        currentLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            Log.nowPlaying.info("[\(logContext)] Starting playback load for '\(song.title)' (\(song.videoId)), token=\(token)")
             do {
-                try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId)
+                try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId, loadToken: token)
+                guard self.currentLoadToken == token else {
+                    Log.nowPlaying.notice("[\(logContext)] Load completed for \(song.videoId) but superseded by newer token \(self.currentLoadToken). Discarding.")
+                    return
+                }
             } catch {
-                Log.nowPlaying.error("\(logContext) failed: \(error)")
+                if Task.isCancelled {
+                    Log.nowPlaying.info("[\(logContext)] Load task cancelled for \(song.videoId)")
+                    return
+                }
+                guard self.currentLoadToken == token else {
+                    Log.nowPlaying.notice("[\(logContext)] Error caught for superseded token \(token). Ignoring.")
+                    return
+                }
+                Log.nowPlaying.error("[\(logContext)] Failed to resolve or play \(song.title) (\(song.videoId)): \(error.localizedDescription)")
+                PlayerController.shared.stop()
                 if self.videoId == song.videoId {
-                    isPlaying = false
+                    self.isPlaying = false
+                    self.currentTime = 0
                 }
             }
-            if manageResolvingFlag {
-                isResolvingNext = false
+            if manageResolvingFlag && self.currentLoadToken == token {
+                self.isResolvingNext = false
             }
             afterResolve?()
         }
     }
 
-    func update(title: String, artist: String?, videoId: String, album: String? = nil, artists: [YTArtist] = [], thumbnailUrl: String? = nil) {
+    func update(title: String, artist: String?, videoId: String, album: String? = nil, artists: [YTArtist] = [], thumbnailUrl: String? = nil, audioBadge: String? = nil, is256AAC: Bool = false) {
         self.isPlaying = true
         self.title = title
         self.artists = artists
@@ -256,6 +282,8 @@ final class NowPlaying {
         self.hasVideo = false
         self.isVideoMode = false
         self.isVideoReady = false
+        self.audioBadge = audioBadge
+        self.is256AAC = is256AAC
         startTimer()
         loadThumbnail(videoId: videoId, thumbnailUrl: thumbnailUrl)
         preloadNextTrack()
@@ -270,8 +298,20 @@ final class NowPlaying {
             videoId: song.videoId,
             album: song.album,
             artists: song.artists,
-            thumbnailUrl: song.thumbnailUrl
+            thumbnailUrl: song.thumbnailUrl,
+            audioBadge: song.audioBadge,
+            is256AAC: song.is256AAC ?? false
         )
+    }
+
+    func updateAudioQuality(badge: String?, is256AAC: Bool) {
+        self.audioBadge = badge
+        self.is256AAC = is256AAC
+    }
+
+    func updateAudioQuality(itag: Int?, mimeType: String? = nil, codec: String? = nil, bitrate: Int? = nil) {
+        self.audioBadge = AudioQualityBadgeHelper.badgeText(itag: itag, mimeType: mimeType, codec: codec, bitrate: bitrate)
+        self.is256AAC = AudioQualityBadgeHelper.is256AAC(itag: itag, mimeType: mimeType, codec: codec, bitrate: bitrate)
     }
 
     /// Records video availability: the watchable-video verdict comes from
@@ -361,7 +401,9 @@ final class NowPlaying {
                 self.persistQueueState()
             } catch {
                 Log.nowPlaying.error("Autoplay similar failed: \(error)")
+                PlayerController.shared.stop()
                 isPlaying = false
+                currentTime = 0
             }
         }
     }
@@ -391,8 +433,10 @@ final class NowPlaying {
                 _ = await MainActor.run { self.lastFailureAt.removeValue(forKey: videoId) }
             } catch {
                 Log.nowPlaying.error("Mid-play recovery failed: \(error)")
+                PlayerController.shared.stop()
                 if self.videoId == videoId {
                     isPlaying = false
+                    currentTime = 0
                 }
             }
         }
