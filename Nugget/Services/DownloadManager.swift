@@ -329,7 +329,9 @@ extension DownloadManager {
             try await downloadToFile(
                 from: url,
                 to: tempDownload,
-                videoId: videoId
+                videoId: videoId,
+                userAgent: result.userAgent,
+                clientName: result.clientName
             )
             let dlElapsed = CFAbsoluteTimeGetCurrent() - dlStart
             let dlSize = (try? tempDownload.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -575,7 +577,9 @@ extension DownloadManager {
     private func downloadToFile(
         from url: URL,
         to destination: URL,
-        videoId: String
+        videoId: String,
+        userAgent: String? = nil,
+        clientName: String? = nil
     ) async throws {
         guard let caPath = Bundle.main.path(forResource: "cacert", ofType: "pem") else {
             throw NSError(
@@ -585,11 +589,25 @@ extension DownloadManager {
             )
         }
 
+        let resolvedUA = (userAgent?.isEmpty == false)
+            ? userAgent!
+            : YouTubeClient.webUserAgent
+
+        var headerLines = ["User-Agent: \(resolvedUA)"]
+        if clientName == "WEB_MUSIC" || clientName == "WEB_REMIX" {
+            headerLines.append("Origin: https://music.youtube.com")
+            headerLines.append("Referer: https://music.youtube.com/")
+        } else if clientName == "WEB" || clientName == "TVHTML5" || clientName == "TVHTML5_SIMPLY_EMBEDDED_PLAYER" {
+            headerLines.append("Origin: https://www.youtube.com")
+            headerLines.append("Referer: https://www.youtube.com/")
+        }
+        let headersArg = headerLines.joined(separator: "\r\n") + "\r\n"
+
         let args = [
             "-y",
             "-rw_timeout", "30000000",
             "-cafile", caPath,
-            "-headers", "User-Agent: Mozilla/5.0\r\n",
+            "-headers", headersArg,
             "-i", url.absoluteString,
             "-c", "copy",
             destination.path
