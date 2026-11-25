@@ -312,7 +312,9 @@ struct FullPlayerView: View {
                 artist: np.displayArtist,
                 spacing: 4,
                 titleFont: .title3.weight(.bold),
-                titleHeight: 28
+                titleHeight: 28,
+                badge: np.audioBadge,
+                is256AAC: np.is256AAC
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
