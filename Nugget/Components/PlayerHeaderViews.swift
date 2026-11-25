@@ -15,6 +15,8 @@ struct PlayerTitleBlock: View {
     var spacing: CGFloat = 2
     var titleFont: Font = .body.weight(.semibold)
     var titleHeight: CGFloat = 24
+    var titleColor: Color = .white
+    var artistColor: Color? = nil
     var badge: String? = nil
     var is256AAC: Bool = false
 
@@ -24,7 +26,8 @@ struct PlayerTitleBlock: View {
                 MarqueeText(
                     text: title,
                     font: titleFont,
-                    frameHeight: titleHeight
+                    frameHeight: titleHeight,
+                    textColor: titleColor
                 )
 
                 if let badge, !badge.isEmpty {
@@ -35,14 +38,14 @@ struct PlayerTitleBlock: View {
             if !artist.isEmpty {
                 Text(artist)
                     .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(artistColor ?? titleColor.opacity(0.7))
                     .lineLimit(1)
             }
         }
     }
 }
 
-/// White heart toggle for player surfaces (FullPlayer, Queue).
+/// Heart toggle for player surfaces (FullPlayer, Queue, Lyrics).
 struct PlayerLikeButton: View {
     var isLiked: Bool
     var activeColor: Color = .red
@@ -60,7 +63,7 @@ struct PlayerLikeButton: View {
     }
 }
 
-/// White ⋮ button for player surfaces. The options sheet stays owned by the caller.
+/// ⋮ button for player surfaces. The options sheet stays owned by the caller.
 struct PlayerOptionsButton: View {
     var color: Color = .white
     let action: () -> Void
