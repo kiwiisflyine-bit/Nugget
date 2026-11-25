@@ -356,6 +356,8 @@ struct FullPlayerView: View {
                 spacing: 4,
                 titleFont: .title3.weight(.bold),
                 titleHeight: 28,
+                titleColor: primaryForeground,
+                artistColor: secondaryForeground,
                 badge: np.audioBadge,
                 is256AAC: np.is256AAC
             )
@@ -366,7 +368,10 @@ struct FullPlayerView: View {
             .layoutPriority(1)
 
             HStack(spacing: 8) {
-                PlayerLikeButton(isLiked: isLiked) {
+                PlayerLikeButton(
+                    isLiked: isLiked,
+                    inactiveColor: primaryForeground
+                ) {
                     guard let song = np.currentSong else { return }
                     Task { await likeStore.toggle(song: song) }
                 }
@@ -375,7 +380,7 @@ struct FullPlayerView: View {
                 .environment(\.colorScheme, activeColorScheme)
 
                 if np.currentSong != nil {
-                    PlayerOptionsButton {
+                    PlayerOptionsButton(color: primaryForeground) {
                         showSongMenu = true
                     }
                     .foregroundStyle(primaryForeground)
