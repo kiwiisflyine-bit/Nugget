@@ -2,7 +2,7 @@
 //  FullPlayerView.swift
 //  Nugget
 //
-//  
+//
 //
 
 import SwiftUI
@@ -12,7 +12,7 @@ struct FullPlayerView: View {
     let onCollapse: () -> Void
 
     @Environment(SettingsStore.self) private var settings
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorScheme) private var environmentColorScheme
     private let player = PlayerController.shared
     @Bindable private var np = NowPlaying.shared
     @State private var editingProgress: Float = 0
@@ -31,35 +31,70 @@ struct FullPlayerView: View {
     @State private var artworkEntryOffset: CGFloat = 0
     @State private var canvasDominantColors: [Color]?
 
+    private var activeColorScheme: ColorScheme {
+        settings.preferredColorScheme ?? environmentColorScheme
+    }
+
     private var isLightTheme: Bool {
-        !(np.isVideoMode && np.hasVideo)
-            && settings.playerBackgroundStyle != .solid
-            && colorScheme == .light
+        !(np.isVideoMode && np.hasVideo) && activeColorScheme == .light
     }
 
     private var primaryForeground: Color {
-        isLightTheme ? Color(red: 0.08, green: 0.08, blue: 0.1) : .white
+        isLightTheme ? .black : .white
     }
 
     private var secondaryForeground: Color {
-        isLightTheme ? Color(red: 0.08, green: 0.08, blue: 0.1).opacity(0.65) : .white.opacity(0.65)
+        isLightTheme ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
     }
 
-    private var playerBackgroundColors: [Color] {
-        let baseAccent = (canvasDominantColors ?? np.dominantColors).first
+    private var accentSeedColor: Color {
+        (canvasDominantColors ?? np.dominantColors).first
             ?? Color(red: 0.22, green: 0.22, blue: 0.28)
-        if colorScheme == .light {
-            let lightBase = Color(red: 0.95, green: 0.95, blue: 0.97)
-            return [
-                baseAccent.opacity(0.26),
-                lightBase
-            ]
+    }
+
+    private var opaqueBackgroundGradient: LinearGradient {
+        if activeColorScheme == .light {
+            let base = Color(red: 0.96, green: 0.96, blue: 0.98)
+            return LinearGradient(
+                colors: [
+                    accentSeedColor.opacity(0.32).blended(over: base),
+                    base
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         } else {
-            let darkBase = Color(red: 0.08, green: 0.08, blue: 0.10)
-            return [
-                baseAccent.opacity(0.45),
-                darkBase
-            ]
+            let base = Color(red: 0.07, green: 0.07, blue: 0.09)
+            return LinearGradient(
+                colors: [
+                    accentSeedColor.opacity(0.48).blended(over: base),
+                    base
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    private var blurTransparentOverlay: LinearGradient {
+        if activeColorScheme == .light {
+            return LinearGradient(
+                colors: [
+                    accentSeedColor.opacity(0.34),
+                    Color.white.opacity(0.72)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else {
+            return LinearGradient(
+                colors: [
+                    accentSeedColor.opacity(0.48),
+                    Color.black.opacity(0.72)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
     }
 
@@ -81,30 +116,8 @@ struct FullPlayerView: View {
             )
 
             ZStack {
-                if np.isVideoMode && np.hasVideo {
-                    Color.black
-                        .ignoresSafeArea()
-                } else if settings.playerBackgroundStyle == .solid {
-                    (colorScheme == .light ? Color.white : Color.black)
-                        .ignoresSafeArea()
-                } else {
-                    LinearGradient(
-                        colors: playerBackgroundColors,
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                playerBackground
                     .ignoresSafeArea()
-                    .animation(.easeInOut(duration: 0.6), value: np.videoId)
-                    .overlay(alignment: .top) {
-                        Circle()
-                            .fill(playerBackgroundColors.first ?? .blue)
-                            .frame(width: 420, height: 420)
-                            .blur(radius: 120)
-                            .opacity(colorScheme == .light ? 0.28 : 0.42)
-                            .offset(y: -150)
-                            .allowsHitTesting(false)
-                    }
-                }
 
                 VStack(spacing: 0) {
                     Capsule()
@@ -147,7 +160,6 @@ struct FullPlayerView: View {
                         Spacer(minLength: isCompact ? 10 : 18)
 
                         titleAndActionsRow
-                            .foregroundStyle(primaryForeground)
                             .padding(.horizontal, horizontalPadding)
                             .padding(.bottom, isCompact ? 10 : 14)
 
@@ -164,28 +176,20 @@ struct FullPlayerView: View {
                             onNext: { np.playNext() }
                         )
                         .foregroundStyle(primaryForeground)
+                        .tint(primaryForeground)
+                        .environment(\.colorScheme, activeColorScheme)
                         .scaleEffect(isCompact ? 0.94 : 1)
                         .padding(.bottom, isCompact ? 4 : 10)
 
-                        HStack(spacing: 24) {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    showLyrics.toggle()
-                                }
-                            } label: {
-                                Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundStyle(showLyrics ? primaryForeground : secondaryForeground)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Lyrics")
-
-                            SecondaryActionsRow(
-                                showQueue: $showQueue,
-                                isRepeatOn: $np.isRepeatOn
-                            )
-                            .foregroundStyle(secondaryForeground)
-                        }
+                        SecondaryActionsRow(
+                            showLyrics: $showLyrics,
+                            showQueue: $showQueue,
+                            isRepeatOn: $np.isRepeatOn
+                        )
+                        .foregroundStyle(secondaryForeground)
+                        .tint(primaryForeground)
+                        .environment(\.colorScheme, activeColorScheme)
+                        .padding(.horizontal, horizontalPadding - 10)
                         .scaleEffect(isCompact ? 0.94 : 1)
 
                         Spacer(minLength: isCompact ? 6 : 12)
@@ -193,6 +197,7 @@ struct FullPlayerView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+            .environment(\.colorScheme, activeColorScheme)
             .offset(y: collapseOffset)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
             .animation(.easeInOut(duration: 0.35), value: showQueue)
@@ -227,11 +232,40 @@ struct FullPlayerView: View {
         }
     }
 
+    @ViewBuilder
+    private var playerBackground: some View {
+        if np.isVideoMode && np.hasVideo {
+            Color.black
+        } else {
+            switch settings.playerBackgroundStyle {
+            case .solid:
+                activeColorScheme == .light ? Color.white : Color.black
+
+            case .opaque:
+                ZStack {
+                    opaqueBackgroundGradient
+                    Circle()
+                        .fill(accentSeedColor)
+                        .frame(width: 420, height: 420)
+                        .blur(radius: 120)
+                        .opacity(activeColorScheme == .light ? 0.22 : 0.36)
+                        .offset(y: -150)
+                }
+                .animation(.easeInOut(duration: 0.6), value: np.videoId)
+
+            case .blurTransparent:
+                ZStack {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                    blurTransparentOverlay
+                }
+                .animation(.easeInOut(duration: 0.6), value: np.videoId)
+            }
+        }
+    }
+
     // MARK: - Gestures
 
-    /// Swipe left/right on the artwork to skip tracks (toggleable in Settings).
-    /// Blocked at the queue's ends (no movement); on skip, the incoming
-    /// artwork slides in from the swipe direction.
     private var artworkSwipe: some Gesture {
         DragGesture(minimumDistance: 20)
             .onEnded { value in
@@ -254,7 +288,6 @@ struct FullPlayerView: View {
         }
     }
 
-    /// Swipe down anywhere to collapse. Vertical-dominant drags only.
     private var collapseDrag: some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
@@ -290,6 +323,7 @@ struct FullPlayerView: View {
                 badge: np.audioBadge,
                 is256AAC: np.is256AAC
             )
+            .foregroundStyle(primaryForeground)
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
@@ -298,11 +332,13 @@ struct FullPlayerView: View {
                     guard let song = np.currentSong else { return }
                     Task { await likeStore.toggle(song: song) }
                 }
+                .foregroundStyle(primaryForeground)
 
                 if np.currentSong != nil {
                     PlayerOptionsButton {
                         showSongMenu = true
                     }
+                    .foregroundStyle(primaryForeground)
                 }
             }
         }
@@ -379,7 +415,7 @@ struct FullPlayerView: View {
         .frame(maxHeight: maxHeight)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .shadow(
-            color: Color.black.opacity(colorScheme == .light ? 0.18 : 0.42),
+            color: Color.black.opacity(activeColorScheme == .light ? 0.18 : 0.42),
             radius: 22,
             x: 0,
             y: 12
@@ -396,7 +432,6 @@ struct FullPlayerView: View {
         .padding(.horizontal, horizontalPadding)
     }
 
-    /// Song artwork (or placeholder), preserving natural aspect ratio cleanly.
     private var artworkImage: some View {
         Group {
             if let uiImage = np.thumbnailUIImage {
@@ -422,7 +457,7 @@ struct FullPlayerView: View {
                     get: { isEditingSlider ? editingProgress : np.progress },
                     set: { editingProgress = $0 }
                 ),
-                accentColor: playerBackgroundColors.first ?? primaryForeground,
+                accentColor: primaryForeground,
                 isPlaying: np.isPlaying,
                 onEditingChanged: { editing in
                     if editing {
@@ -452,5 +487,28 @@ struct FullPlayerView: View {
             }
         }
         .padding(.horizontal, horizontalPadding)
+    }
+}
+
+private extension Color {
+    /// Composites a semi-transparent tint over a solid base color so the result
+    /// is genuinely opaque and never lets underlying views bleed through.
+    func blended(over base: Color) -> Color {
+        let top = UIColor(self)
+        let bottom = UIColor(base)
+
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+
+        guard top.getRed(&tr, green: &tg, blue: &tb, alpha: &ta),
+              bottom.getRed(&br, green: &bg, blue: &bb, alpha: &ba) else {
+            return base
+        }
+
+        let alpha = min(max(ta, 0), 1)
+        let r = tr * alpha + br * (1 - alpha)
+        let g = tg * alpha + bg * (1 - alpha)
+        let b = tb * alpha + bb * (1 - alpha)
+        return Color(red: Double(r), green: Double(g), blue: Double(b))
     }
 }
