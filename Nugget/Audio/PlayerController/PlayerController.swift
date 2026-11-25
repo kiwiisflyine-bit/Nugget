@@ -153,6 +153,36 @@ final class PlayerController {
 // MARK: - Playback
 
 extension PlayerController {
+    /// Halts playback immediately, clears active and pending items, and resets player state cleanly.
+    @MainActor
+    func stop() {
+        Log.player.info("TRANSITION stop requested - halting mpv and resetting active playback")
+        desiredPlaying = false
+        withMpv { mpv in
+            var flag: Int32 = 1
+            mpv_set_property(mpv, "pause", MPV_FORMAT_FLAG, &flag)
+            _ = ["stop"].withUnsafeCArg { mpv_command(mpv, $0) }
+        }
+        currentVideoId = nil
+        pendingVideoId = nil
+        pendingURL = nil
+        loadedMuxedURL = nil
+        loadedVideoOnlyURL = nil
+        voWarmedVideoId = nil
+        muxedActive = false
+        muxedVideoId = nil
+        pendingResumeAt = 0
+        pendingSeek = nil
+        videoModeSwitchInFlight = false
+        videoFlipAwaitingRestart = false
+        if hasPresentedVideo { clearVideoLayer() }
+        playState.send(.stopped)
+        NowPlaying.shared.isPlaying = false
+        NowPlaying.shared.currentTime = 0
+        updateNowPlayingProgress()
+        Task { await PlaybackStateService.shared.stopTracking() }
+    }
+
     @MainActor
     func play(
         url: String,
@@ -162,11 +192,19 @@ extension PlayerController {
         duration: TimeInterval? = nil,
         artists: [YTArtist] = [],
         loudnessDb: Double? = nil,
-        thumbnailUrl: String? = nil
+        thumbnailUrl: String? = nil,
+        loadToken: UUID? = nil
     ) async {
+        if let loadToken {
+            guard NowPlaying.shared.currentLoadToken == loadToken else {
+                Log.player.notice("PlayerController.play discarded: loadToken=\(loadToken) superseded by current=\(NowPlaying.shared.currentLoadToken)")
+                return
+            }
+        }
         currentLoudnessDb = loudnessDb
         guard let url = URL(string: url) else {
             Log.player.error("Invalid URL: \(url)")
+            stop()
             return
         }
 
@@ -176,7 +214,14 @@ extension PlayerController {
 
         let skipStart = await SponsorBlockIntegration.shared.preloadedStartOffset(for: videoId)
         guard NowPlaying.shared.videoId == videoId else {
+            Log.player.notice("PlayerController.play discarded: videoId mismatch \(videoId ?? "nil") != \(NowPlaying.shared.videoId ?? "nil")")
             return
+        }
+        if let loadToken {
+            guard NowPlaying.shared.currentLoadToken == loadToken else {
+                Log.player.notice("PlayerController.play discarded after sponsorblock check: loadToken superseded")
+                return
+            }
         }
 
         let prevVideoId = currentVideoId
@@ -223,6 +268,7 @@ extension PlayerController {
         if cmdResult != 0 {
             Log.player.error("mpv_command loadfile failed result=\(cmdResult)")
             pendingVideoId = nil
+            stop()
             return
         }
         if isNewSong {
