@@ -2,7 +2,7 @@
 //  PlayerController.swift
 //  Nugget
 //
-//  
+//
 //
 
 import Foundation
@@ -308,9 +308,17 @@ extension PlayerController {
             mpv_set_property_string(mpv, "user-agent", "libmpv")
         }
         if clientName == "WEB_MUSIC" || clientName == "WEB_REMIX" {
-            mpv_set_property_string(mpv, "http-header-fields", "Origin: https://music.youtube.com,Referer: https://music.youtube.com/")
+            mpv_set_property_string(
+                mpv,
+                "http-header-fields",
+                "Origin: https://music.youtube.com\r\nReferer: https://music.youtube.com/"
+            )
         } else if clientName == "WEB" || clientName == "TVHTML5" || clientName == "TVHTML5_SIMPLY_EMBEDDED_PLAYER" {
-            mpv_set_property_string(mpv, "http-header-fields", "Origin: https://www.youtube.com,Referer: https://www.youtube.com/")
+            mpv_set_property_string(
+                mpv,
+                "http-header-fields",
+                "Origin: https://www.youtube.com\r\nReferer: https://www.youtube.com/"
+            )
         } else {
             mpv_set_property_string(mpv, "http-header-fields", "")
         }
