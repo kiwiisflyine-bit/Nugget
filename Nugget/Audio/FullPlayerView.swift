@@ -6,11 +6,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct FullPlayerView: View {
     let onCollapse: () -> Void
 
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.colorScheme) private var colorScheme
     private let player = PlayerController.shared
     @Bindable private var np = NowPlaying.shared
     @State private var editingProgress: Float = 0
@@ -27,91 +29,89 @@ struct FullPlayerView: View {
     @State private var pendingRoute: DetailRoute?
     @State private var showSongMenu = false
     @State private var artworkEntryOffset: CGFloat = 0
-    @State private var currentLyrics: [LyricLine] = []
     @State private var canvasDominantColors: [Color]?
 
-    private var playerBackgroundColors: [Color] {
-        canvasDominantColors ?? np.dominantColors
+    private var isLightTheme: Bool {
+        !(np.isVideoMode && np.hasVideo)
+            && settings.playerBackgroundStyle != .solid
+            && colorScheme == .light
     }
 
-    private var activeLyricText: String? {
-        let synchronizedLines = currentLyrics.filter {
-            $0.startTime != nil &&
-                !$0.text.trimmingCharacters(in: CharacterSet(charactersIn: "♪*· ")).isEmpty
-        }
-        guard let firstLine = synchronizedLines.first else { return nil }
+    private var primaryForeground: Color {
+        isLightTheme ? Color(red: 0.08, green: 0.08, blue: 0.1) : .white
+    }
 
-        let lyricTime = np.currentTime + settings.lyricsOffsetSeconds
-        return synchronizedLines.last { line in
-            guard let startTime = line.startTime else { return false }
-            return startTime <= lyricTime
-        }?.text ?? firstLine.text
+    private var secondaryForeground: Color {
+        isLightTheme ? Color(red: 0.08, green: 0.08, blue: 0.1).opacity(0.65) : .white.opacity(0.65)
+    }
+
+    private var playerBackgroundColors: [Color] {
+        let baseAccent = (canvasDominantColors ?? np.dominantColors).first
+            ?? Color(red: 0.22, green: 0.22, blue: 0.28)
+        if colorScheme == .light {
+            let lightBase = Color(red: 0.95, green: 0.95, blue: 0.97)
+            return [
+                baseAccent.opacity(0.26),
+                lightBase
+            ]
+        } else {
+            let darkBase = Color(red: 0.08, green: 0.08, blue: 0.10)
+            return [
+                baseAccent.opacity(0.45),
+                darkBase
+            ]
+        }
+    }
+
+    private var artworkAspectRatio: CGFloat {
+        guard let uiImage = np.thumbnailUIImage, uiImage.size.height > 0 else {
+            return 1
+        }
+        let ratio = uiImage.size.width / uiImage.size.height
+        return max(0.75, min(1.78, ratio))
     }
 
     var body: some View {
         GeometryReader { geometry in
             let horizontalPadding: CGFloat = geometry.size.width < 375 ? 24 : 32
             let isCompact = geometry.size.height < 700
+            let maxCardHeight = min(
+                geometry.size.height * (isCompact ? 0.34 : 0.40),
+                360
+            )
 
             ZStack {
                 if np.isVideoMode && np.hasVideo {
                     Color.black
                         .ignoresSafeArea()
                 } else if settings.playerBackgroundStyle == .solid {
-                    Color.black
+                    (colorScheme == .light ? Color.white : Color.black)
                         .ignoresSafeArea()
                 } else {
                     LinearGradient(
-                        colors: [
-                            playerBackgroundColors.first ?? Color(red: 0.15, green: 0.15, blue: 0.2),
-                            playerBackgroundColors.last ?? Color(red: 0.05, green: 0.05, blue: 0.08)
-                        ],
+                        colors: playerBackgroundColors,
                         startPoint: .top,
                         endPoint: .bottom
                     )
                     .ignoresSafeArea()
-                    .animation(.easeInOut(duration: 0.8), value: playerBackgroundColors)
+                    .animation(.easeInOut(duration: 0.6), value: np.videoId)
                     .overlay(alignment: .top) {
                         Circle()
                             .fill(playerBackgroundColors.first ?? .blue)
-                            .frame(width: 400, height: 400)
+                            .frame(width: 420, height: 420)
                             .blur(radius: 120)
-                            .opacity(0.45)
+                            .opacity(colorScheme == .light ? 0.28 : 0.42)
                             .offset(y: -150)
                             .allowsHitTesting(false)
                     }
                 }
 
-                if !showLyrics && !showQueue && !np.isVideoMode {
-                    artwork
-                        .frame(maxWidth: .infinity)
-                        .frame(height: min(
-                            (geometry.size.height + geometry.safeAreaInsets.top) * 0.58,
-                            geometry.size.height * 0.66
-                        ))
-                        .compositingGroup()
-                        .clipped()
-                        .mask {
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .white, location: 0),
-                                    .init(color: .white, location: 0.62),
-                                    .init(color: .clear, location: 1)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        }
-                        .offset(y: -geometry.safeAreaInsets.top)
-                        .frame(maxHeight: .infinity, alignment: .top)
-                }
-
                 VStack(spacing: 0) {
                     Capsule()
-                        .fill(.white.opacity(0.3))
+                        .fill(primaryForeground.opacity(0.28))
                         .frame(width: 36, height: 5)
-                        .padding(.top, 16)
-                        .padding(.bottom, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 12)
                         .contentShape(Rectangle().size(width: 60, height: 30))
                         .onTapGesture {
                             guard showLyrics else { return }
@@ -140,48 +140,19 @@ struct FullPlayerView: View {
                             progressSlider: { progressSlider(horizontalPadding: horizontalPadding) }
                         )
                     } else {
-                        Color.clear.frame(height: isCompact ? 4 : 8)
+                        Spacer(minLength: isCompact ? 6 : 14)
 
-                        Spacer(minLength: isCompact ? 8 : 16)
+                        artworkCard(maxHeight: maxCardHeight, horizontalPadding: horizontalPadding)
+
+                        Spacer(minLength: isCompact ? 10 : 18)
 
                         titleAndActionsRow
+                            .foregroundStyle(primaryForeground)
                             .padding(.horizontal, horizontalPadding)
                             .padding(.bottom, isCompact ? 10 : 14)
 
-                        Group {
-                            if let activeLyricText {
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.3)) {
-                                        showLyrics = true
-                                    }
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Text(activeLyricText)
-                                            .font(.system(size: 14, weight: .medium))
-                                            .lineLimit(1)
-                                            .truncationMode(.tail)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.55))
-                                    }
-                                    .foregroundStyle(.white.opacity(0.82))
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, horizontalPadding)
-                                .padding(.bottom, 8)
-                                .accessibilityLabel("Current lyric: \(activeLyricText). Open lyrics")
-                            } else {
-                                Color.clear
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 33, alignment: .bottom)
-
                         progressSlider(horizontalPadding: horizontalPadding)
-                            .padding(.top, 4)
+                            .padding(.top, 2)
                             .padding(.bottom, isCompact ? 8 : 12)
 
                         PlaybackControlsRow(
@@ -192,17 +163,32 @@ struct FullPlayerView: View {
                             onPlayPause: { player.togglePlayPause() },
                             onNext: { np.playNext() }
                         )
+                        .foregroundStyle(primaryForeground)
                         .scaleEffect(isCompact ? 0.94 : 1)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: np.isPlaying)
-                        .padding(.bottom, isCompact ? 2 : 8)
+                        .padding(.bottom, isCompact ? 4 : 10)
 
-                        SecondaryActionsRow(
-                            showQueue: $showQueue,
-                            isRepeatOn: $np.isRepeatOn
-                        )
-                        .scaleEffect(isCompact ? 0.92 : 1)
+                        HStack(spacing: 24) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showLyrics.toggle()
+                                }
+                            } label: {
+                                Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(showLyrics ? primaryForeground : secondaryForeground)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Lyrics")
 
-                        Color.clear.frame(height: isCompact ? 2 : 8)
+                            SecondaryActionsRow(
+                                showQueue: $showQueue,
+                                isRepeatOn: $np.isRepeatOn
+                            )
+                            .foregroundStyle(secondaryForeground)
+                        }
+                        .scaleEffect(isCompact ? 0.94 : 1)
+
+                        Spacer(minLength: isCompact ? 6 : 12)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -228,7 +214,7 @@ struct FullPlayerView: View {
                 if newValue { np.preloadNeighborArtwork() }
             }
             .task { np.preloadNeighborArtwork() }
-            .task(id: np.videoId) { await loadCurrentLyrics() }
+            .task(id: np.videoId) { preloadLyrics() }
             .sheet(isPresented: $showSongMenu) {
                 if let song = np.currentSong {
                     PlayerMenuSheet(song: song, onCollapseRequest: { onCollapse() })
@@ -291,18 +277,6 @@ struct FullPlayerView: View {
         guard let id = np.videoId else { return }
         let upcoming = np.upcomingSongs(prefixLimit: 3).map(\.videoId)
         Task { await LyricsService.shared.preload(videoId: id, upcoming: upcoming) }
-    }
-
-    private func loadCurrentLyrics() async {
-        guard let videoId = np.videoId else {
-            currentLyrics = []
-            return
-        }
-        currentLyrics = []
-        guard let lines = try? await LyricsService.shared.fetchLyrics(videoId: videoId),
-              !Task.isCancelled,
-              np.videoId == videoId else { return }
-        currentLyrics = lines
     }
 
     private var titleAndActionsRow: some View {
@@ -373,80 +347,70 @@ struct FullPlayerView: View {
     }
 
     private var musicVideoStage: some View {
-        artwork
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .frame(maxWidth: .infinity)
-            .clipped()
-    }
-
-    @ViewBuilder
-    private var artwork: some View {
-        Group {
-            if np.isVideoMode, np.hasVideo {
-                ZStack {
-                    VideoPlayerView()
-                        .mask {
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .clear, location: 0),
-                                    .init(color: .white, location: 0.12),
-                                    .init(color: .white, location: 0.95),
-                                    .init(color: .clear, location: 1)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        }
-                    if !np.isVideoReady {
-                        artworkImage
-                            .transition(.opacity)
-                    }
-                }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .animation(.easeOut(duration: 0.2), value: np.isVideoReady)
-            } else {
-                ZStack {
-                    artworkImage
-                    CanvasVideoView(
-                        videoId: np.videoId,
-                        title: np.title,
-                        artist: np.artist,
-                        album: np.albumTitle.isEmpty ? nil : np.albumTitle,
-                        isPlaying: np.isPlaying,
-                        enabled: settings.canvasEnabled,
-                        onDominantColorsChange: { canvasDominantColors = $0 }
-                    )
-                }
-                .onTapGesture {
-                    guard np.hasVideo else { return }
-                    showQueue = true
-                    player.setVideoMode()
-                }
+        ZStack {
+            VideoPlayerView()
+            if !np.isVideoReady {
+                artworkImage
+                    .transition(.opacity)
             }
         }
-        .offset(x: artworkEntryOffset)
-        .gesture(artworkSwipe)
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+        .animation(.easeOut(duration: 0.2), value: np.isVideoReady)
     }
 
-    /// Song artwork (or placeholder), filling its container.
+    private func artworkCard(maxHeight: CGFloat, horizontalPadding: CGFloat) -> some View {
+        let cornerRadius: CGFloat = 16
+        return ZStack {
+            artworkImage
+            CanvasVideoView(
+                videoId: np.videoId,
+                title: np.title,
+                artist: np.artist,
+                album: np.albumTitle.isEmpty ? nil : np.albumTitle,
+                isPlaying: np.isPlaying,
+                enabled: settings.canvasEnabled,
+                onDominantColorsChange: { canvasDominantColors = $0 }
+            )
+        }
+        .aspectRatio(artworkAspectRatio, contentMode: .fit)
+        .frame(maxHeight: maxHeight)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .shadow(
+            color: Color.black.opacity(colorScheme == .light ? 0.18 : 0.42),
+            radius: 22,
+            x: 0,
+            y: 12
+        )
+        .scaleEffect(np.isPlaying ? 1.0 : 0.75)
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: np.isPlaying)
+        .offset(x: artworkEntryOffset)
+        .gesture(artworkSwipe)
+        .onTapGesture {
+            guard np.hasVideo else { return }
+            showQueue = true
+            player.setVideoMode()
+        }
+        .padding(.horizontal, horizontalPadding)
+    }
+
+    /// Song artwork (or placeholder), preserving natural aspect ratio cleanly.
     private var artworkImage: some View {
-        ZStack {
+        Group {
             if let uiImage = np.thumbnailUIImage {
-                let cropped = uiImage.centerCroppedSquare()
-                GeometryReader { geo in
-                    Image(uiImage: cropped)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                }
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
             } else {
-                ZStack {
-                    Color.white.opacity(0.1)
-                    Image(systemName: "music.note")
-                        .font(.system(size: 64))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(primaryForeground.opacity(0.1))
+                    .overlay {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 56))
+                            .foregroundStyle(secondaryForeground)
+                    }
             }
         }
     }
@@ -458,7 +422,7 @@ struct FullPlayerView: View {
                     get: { isEditingSlider ? editingProgress : np.progress },
                     set: { editingProgress = $0 }
                 ),
-                accentColor: np.dominantColors.first ?? .white,
+                accentColor: playerBackgroundColors.first ?? primaryForeground,
                 isPlaying: np.isPlaying,
                 onEditingChanged: { editing in
                     if editing {
@@ -478,16 +442,15 @@ struct FullPlayerView: View {
                     ? TimeInterval(editingProgress) * np.duration
                     : np.currentTime))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(secondaryForeground)
 
                 Spacer()
 
                 Text(DurationFormat.playbackTime(np.duration))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(secondaryForeground)
             }
         }
         .padding(.horizontal, horizontalPadding)
     }
-
 }
