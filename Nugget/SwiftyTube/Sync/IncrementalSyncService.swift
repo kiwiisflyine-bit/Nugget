@@ -10,7 +10,7 @@ import Foundation
 public actor IncrementalSyncService {
     private let client: InnerTubeClient
     private let librarySync: LibrarySyncService
-    private let defaults: UserDefaults
+    private nonisolated(unsafe) let defaults: UserDefaults
 
     private let lastSyncKey = "lastSyncTimestamp"
     private let syncThreshold: TimeInterval = 30 * 60 // 30 minutes
