@@ -175,6 +175,7 @@ final class DownloadManager: ObservableObject {
 
         for (videoId, url) in scanned where rebuilt[videoId] == nil {
             let metadata = await songMetadata(for: videoId)
+            let audioMeta = await extractAudioMetadata(from: url)
             let entity = DownloadedTrackEntity(
                 id: videoId,
                 title: metadata?.title ?? Self.displayTitle(from: url),
@@ -183,7 +184,10 @@ final class DownloadManager: ObservableObject {
                 thumbnailUrl: metadata?.thumbnailUrl,
                 localPath: storedPath(for: url),
                 downloadedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey])
-                    .contentModificationDate) ?? Date()
+                    .contentModificationDate) ?? Date(),
+                itag: audioMeta.itag,
+                codec: audioMeta.codec,
+                bitrate: audioMeta.bitrate
             )
             _ = try? await DatabaseService.shared.insertOrReplace(entity)
             rebuilt[videoId] = entity
@@ -391,14 +395,17 @@ extension DownloadManager {
                 duration: song.duration,
                 thumbnailUrl: song.thumbnailUrl,
                 localPath: storedPath(for: fileURL),
-                downloadedAt: Date()
+                downloadedAt: Date(),
+                itag: result.itag,
+                codec: isAACStream ? "AAC" : "OPUS",
+                bitrate: result.bitrate
             )
             await register(entity)
 
             downloads[videoId] = .completed
             lastReportedProgress.removeValue(forKey: videoId)
             let totalElapsed = CFAbsoluteTimeGetCurrent() - downloadStart
-            Log.downloadManager.debug("DONE \(String(format: "%.1f", totalElapsed))s total: \(artist) - \(song.title)")
+            Log.downloadManager.debug("DONE \(String(format: "%.1f", totalElapsed))s total: \(artist) - \(song.title) (itag=\(result.itag), bitrate=\(result.bitrate))")
         } catch is CancellationError {
             cancelledDownloadIds.remove(videoId)
             lastReportedProgress.removeValue(forKey: videoId)
@@ -422,6 +429,7 @@ extension DownloadManager {
     }
 
     private func adoptExistingFile(at url: URL, song: SongItem) async {
+        let audioMeta = await extractAudioMetadata(from: url)
         let entity = DownloadedTrackEntity(
             id: song.videoId,
             title: song.title,
@@ -430,9 +438,29 @@ extension DownloadManager {
             thumbnailUrl: song.thumbnailUrl,
             localPath: storedPath(for: url),
             downloadedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate) ?? Date()
+                .contentModificationDate) ?? Date(),
+            itag: audioMeta.itag,
+            codec: audioMeta.codec,
+            bitrate: audioMeta.bitrate
         )
         await register(entity)
+    }
+
+    func track(for videoId: String) -> DownloadedTrackEntity? {
+        tracksById[videoId]
+    }
+
+    private func extractAudioMetadata(from fileURL: URL) async -> (itag: Int?, codec: String?, bitrate: Int?) {
+        let asset = AVURLAsset(url: fileURL)
+        guard let tracks = try? await asset.loadTracks(withMediaType: .audio),
+              let audioTrack = tracks.first else {
+            return (140, "AAC", 128_000)
+        }
+        let rate = try? await audioTrack.load(.estimatedDataRate)
+        let bitrate = (rate.map(Int.init) ?? 0)
+        let is256 = bitrate >= 240_000
+        let itag = is256 ? 141 : 140
+        return (itag, "AAC", bitrate > 0 ? bitrate : (is256 ? 256_000 : 128_000))
     }
 
     private func register(_ entity: DownloadedTrackEntity) async {
