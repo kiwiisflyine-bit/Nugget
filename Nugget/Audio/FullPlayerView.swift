@@ -76,13 +76,15 @@ struct FullPlayerView: View {
         }
     }
 
+    /// Translucent overlay that lets the underlying screen show through while
+    /// preserving contrast for foreground text and controls.
     private var blurOverlay: LinearGradient {
-        let strength = settings.playerBlurIntensity
+        let strength = min(max(settings.playerBlurIntensity, 0), 1)
         if activeColorScheme == .light {
             return LinearGradient(
                 colors: [
-                    accentSeedColor.opacity(0.2 + strength * 0.25),
-                    Color.white.opacity(0.55 + strength * 0.25)
+                    Color.white.opacity(0.22 + strength * 0.28),
+                    Color.white.opacity(0.35 + strength * 0.35)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -90,8 +92,8 @@ struct FullPlayerView: View {
         } else {
             return LinearGradient(
                 colors: [
-                    accentSeedColor.opacity(0.3 + strength * 0.3),
-                    Color.black.opacity(0.55 + strength * 0.25)
+                    Color.black.opacity(0.28 + strength * 0.30),
+                    Color.black.opacity(0.42 + strength * 0.33)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -203,6 +205,8 @@ struct FullPlayerView: View {
             .foregroundStyle(primaryForeground)
             .tint(primaryForeground)
             .environment(\.colorScheme, activeColorScheme)
+            .toolbar(.hidden, for: .tabBar)
+            .ignoresSafeArea()
             .offset(y: collapseOffset)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
             .animation(.easeInOut(duration: 0.35), value: showQueue)
@@ -261,23 +265,27 @@ struct FullPlayerView: View {
                 .animation(.easeInOut(duration: 0.6), value: np.videoId)
 
             case .blur:
-                let radius = max(4, settings.playerBlurIntensity * 50)
+                let intensity = min(max(settings.playerBlurIntensity, 0), 1)
                 ZStack {
-                    if let uiImage = np.thumbnailUIImage {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                            .blur(radius: radius)
-                    } else {
-                        Rectangle()
-                            .fill(.ultraThinMaterial)
-                    }
+                    Rectangle()
+                        .fill(materialForBlurIntensity(intensity))
                     blurOverlay
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-                .animation(.easeInOut(duration: 0.6), value: np.videoId)
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.35), value: intensity)
             }
+        }
+    }
+
+    private func materialForBlurIntensity(_ intensity: Double) -> Material {
+        switch intensity {
+        case ..<0.34:
+            return .ultraThinMaterial
+        case ..<0.67:
+            return .thinMaterial
+        default:
+            return .regularMaterial
         }
     }
 
