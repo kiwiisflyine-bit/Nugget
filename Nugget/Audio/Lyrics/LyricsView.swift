@@ -265,13 +265,13 @@ struct LyricsView<ProgressSlider: View>: View {
         .animation(.easeInOut(duration: 0.2), value: showRing)
     }
 
-    /// Accent color for solid backgrounds; white on opaque / blur-transparent
+    /// Accent color for solid backgrounds; white on tinted / blur
     /// album art backgrounds.
     private var intervalIndicatorColor: Color {
         switch settings.playerBackgroundStyle {
         case .solid:
             return settings.accentColor
-        case .opaque, .blurTransparent:
+        case .tinted, .blur:
             return .white
         }
     }
