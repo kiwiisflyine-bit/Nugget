@@ -74,6 +74,7 @@ actor DatabaseService {
         migrator.registerMigration("v6", migrate: DatabaseMigrations.v6)
         migrator.registerMigration("v7", migrate: DatabaseMigrations.v7)
         migrator.registerMigration("v8", migrate: DatabaseMigrations.v8)
+        migrator.registerMigration("v9", migrate: DatabaseMigrations.v9)
     }
 }
 
