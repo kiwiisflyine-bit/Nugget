@@ -37,6 +37,15 @@ struct SongRowView: View {
 
     @State private var durations = DurationResolver()
     @State private var showSongMenu = false
+    @ObservedObject private var downloadManager = DownloadManager.shared
+
+    private var resolvedAudioBadge: String? {
+        song.audioBadge ?? downloadManager.track(for: song.videoId)?.audioBadgeText
+    }
+
+    private var is256AAC: Bool {
+        song.is256AAC ?? (downloadManager.track(for: song.videoId)?.is256AAC ?? false)
+    }
 
     var body: some View {
         HStack(spacing: DesignTokens.rowSpacing) {
@@ -45,11 +54,17 @@ struct SongRowView: View {
                 .clipShape(RoundedRectangle(cornerRadius: artRadius, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(song.title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
+                HStack(alignment: .center, spacing: 6) {
+                    Text(song.title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    if let badge = resolvedAudioBadge {
+                        AudioQualityBadge(badge: badge, is256AAC: is256AAC)
+                    }
+                }
 
                 Text(song.subtitleLine(duration: durations.effectiveDuration(known: song.duration)))
                     .font(.caption)
