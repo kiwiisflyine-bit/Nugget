@@ -271,30 +271,43 @@ public enum StreamFallback: Sendable {
 
                 let allFormats = (streamingData.formats ?? []) + (streamingData.adaptiveFormats ?? [])
 
-                if let muxed = FormatSelector.bestVideoFormat(from: allFormats),
-                   let url = muxed.url {
-                    return .muxed(url)
+                if let muxed = FormatSelector.bestVideoFormat(from: allFormats) {
+                    do {
+                        var muxedURL = try await resolveFormatURL(muxed, providers: providers)
+                        if let pot = streamingDataPoToken, entry.client.useWebPoTokens {
+                            muxedURL = StreamResolver.appendingPoToken(to: muxedURL, pot: pot)
+                        }
+                        SwiftyTubeLog.debug("[\(entry.client.clientName)] Video resolved as muxed (itag=\(muxed.itag ?? 0))")
+                        return .muxed(muxedURL)
+                    } catch {
+                        lastError = error
+                        SwiftyTubeLog.notice("[\(entry.client.clientName)] Failed resolving muxed URL: \(error)")
+                    }
                 }
 
                 if let video = FormatSelector.bestVideoOnlyFormat(from: allFormats),
-                   let videoURL = video.url,
                    let audio = FormatSelector.bestAudioFormat(
                        from: allFormats,
                        preference: request.options.audioQuality
                    ) {
                     do {
+                        var videoURL = try await resolveFormatURL(video, providers: providers)
                         var audioURL = try await resolveFormatURL(audio, providers: providers)
                         if let pot = streamingDataPoToken, entry.client.useWebPoTokens {
+                            videoURL = StreamResolver.appendingPoToken(to: videoURL, pot: pot)
                             audioURL = StreamResolver.appendingPoToken(to: audioURL, pot: pot)
                         }
                         let duration = response.videoDetails?.lengthSeconds.flatMap(Int.init)
+                        SwiftyTubeLog.debug("[\(entry.client.clientName)] Video resolved as split (video itag=\(video.itag ?? 0), audio itag=\(audio.itag ?? 0))")
                         return .split(video: videoURL, audio: audioURL, duration: duration)
                     } catch {
                         lastError = error
+                        SwiftyTubeLog.notice("[\(entry.client.clientName)] Failed resolving split video: \(error)")
                     }
                 }
 
                 if let hlsURL, !hlsURL.isEmpty {
+                    SwiftyTubeLog.debug("[\(entry.client.clientName)] Video resolved as HLS")
                     return .hls(hlsURL)
                 }
             } catch {
