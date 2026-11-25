@@ -34,15 +34,21 @@ public enum ClientFallbackChain: Sendable {
 
     /// Fallback chain for YouTube Music playback.
     public static var preferred: [FallbackClient] {
-        direct + [FallbackClient(client: .webRemix, skipValidation: true)]
+        direct + [
+            FallbackClient(client: .webRemix, skipValidation: true),
+            FallbackClient(client: .web, skipValidation: true)
+        ]
     }
 
-    /// Fallback chain prioritizing WEB_MUSIC desktop context for 256AAC stream resolution.
+    /// Fallback chain prioritizing WEB_MUSIC desktop context for 256AAC stream resolution,
+    /// falling back to direct clients and WEB desktop client for non-256 AAC and general YouTube clips.
     public static var aac256Chain: [FallbackClient] {
         [
             FallbackClient(client: .webMusic, skipValidation: true),
             FallbackClient(client: .webRemix, skipValidation: true)
-        ] + direct
+        ] + direct + [
+            FallbackClient(client: .web, skipValidation: true)
+        ]
     }
 
     /// Fallback chain for main-YouTube playback.
@@ -50,6 +56,8 @@ public enum ClientFallbackChain: Sendable {
         direct + [FallbackClient(client: .web, skipValidation: true)]
     }
 
-    /// Same order for downloads (validation stays on).
-    public static var forDownload: [FallbackClient] { preferred }
+    /// Chain for downloads, supporting both 256AAC and non-256/general formats.
+    public static var forDownload: [FallbackClient] {
+        preferred
+    }
 }
