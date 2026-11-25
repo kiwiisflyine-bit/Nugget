@@ -423,17 +423,17 @@ extension PlayerController {
 
         #if targetEnvironment(simulator)
         mpv_set_option_string(mpv, "hwdec", "no")
-        mpv_set_option_string(mpv, "audio-exclusive", "no")
         #else
         mpv_set_option_string(mpv, "hwdec", "videotoolbox")
-        mpv_set_option_string(mpv, "audio-exclusive", "yes")
         #endif
+        mpv_set_option_string(mpv, "audio-exclusive", "no")
 
         mpv_set_option_string(mpv, "keep-open", "no")
         mpv_set_option_string(mpv, "cache", "yes")
         mpv_set_option_string(mpv, "cache-secs", "120")
         mpv_set_option_string(mpv, "demuxer-max-bytes", "200M")
         mpv_set_option_string(mpv, "gapless-audio", "yes")
+        mpv_set_option_string(mpv, "stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=2")
     }
 
     nonisolated private static func applyPostInitProperties(_ mpv: OpaquePointer) {
@@ -443,9 +443,6 @@ extension PlayerController {
         } else {
             Log.player.warning("mpv cacert.pem not found in main bundle")
         }
-        let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15" +
-            " (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        mpv_set_property_string(mpv, "user-agent", userAgent)
         mpv_set_property_string(mpv, "video-unscaled", "no")
         mpv_set_property_string(mpv, "keepaspect", "no")
     }
@@ -597,7 +594,7 @@ extension PlayerController {
         let reason = endFile.reason
         let isEof = reason == MPV_END_FILE_REASON_EOF
         let isError = reason == MPV_END_FILE_REASON_ERROR
-        let stoppedVideoId = self.currentVideoId
+        let stoppedVideoId = self.currentVideoId ?? self.pendingVideoId
         Task { @MainActor [weak self] in
             guard let self else { return }
             let videoId = stoppedVideoId
@@ -612,6 +609,7 @@ extension PlayerController {
                 NowPlaying.shared.stopped(videoId: videoId, isEof: true)
             } else if isError {
                 self.currentVideoId = nil
+                self.pendingVideoId = nil
                 self.playState.send(.stopped)
                 NowPlaying.shared.stopped(videoId: videoId, isEof: false)
             } else {
