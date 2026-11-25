@@ -265,12 +265,14 @@ struct LyricsView<ProgressSlider: View>: View {
         .animation(.easeInOut(duration: 0.2), value: showRing)
     }
 
-    /// Metrolist's expressiveAccent: white on dynamic (album art) backgrounds,
-    /// the accent color on solid ones.
+    /// Accent color for solid backgrounds; white on opaque / blur-transparent
+    /// album art backgrounds.
     private var intervalIndicatorColor: Color {
         switch settings.playerBackgroundStyle {
-        case .solid: return settings.accentColor
-        case .dynamic: return .white
+        case .solid:
+            return settings.accentColor
+        case .opaque, .blurTransparent:
+            return .white
         }
     }
 
