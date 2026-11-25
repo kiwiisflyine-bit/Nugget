@@ -68,6 +68,7 @@ actor PlaybackManager {
                 duration: song?.duration,
                 expiresInSeconds: Int.max,
                 clientName: "local",
+                userAgent: nil,
                 musicVideoType: nil,
                 hasVideoContent: false,
                 muxedStreamUrl: nil,
@@ -93,6 +94,8 @@ actor PlaybackManager {
                 artists: queueSong?.artists ?? [],
                 loudnessDb: cached.loudnessDb,
                 thumbnailUrl: queueSong?.thumbnailUrl,
+                userAgent: cached.userAgent,
+                clientName: cached.clientName,
                 loadToken: loadToken
             )
             await publishVideoAvailability(result: cached, videoId: videoId, rowType: queueSong?.musicVideoType)
@@ -146,6 +149,8 @@ actor PlaybackManager {
             artists: queueSong?.artists ?? [],
             loudnessDb: result.loudnessDb,
             thumbnailUrl: queueSong?.thumbnailUrl,
+            userAgent: result.userAgent,
+            clientName: result.clientName,
             loadToken: loadToken
         )
         await publishVideoAvailability(result: result, videoId: videoId, rowType: queueSong?.musicVideoType)
@@ -223,6 +228,7 @@ actor PlaybackManager {
         request.chain = (request.options.audioQuality == .aac256)
             ? ClientFallbackChain.aac256Chain
             : ClientFallbackChain.preferred
+        await InnerTubeClient.updateStreamAuth()
         switch try await StreamFallback.resolveVideo(
             request,
             using: InnerTubeClient.nuggetShared,
