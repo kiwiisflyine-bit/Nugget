@@ -150,6 +150,7 @@ enum Log {
     }
 
     static let player = AppLogger(logger: Logger(subsystem: subsystem, category: "Player"), category: "player", redact: false)
+    static let playbackManager = AppLogger(logger: Logger(subsystem: subsystem, category: "PlaybackManager"), category: "playbackManager", redact: false)
     static let sponsorBlock = AppLogger(logger: Logger(subsystem: subsystem, category: "SponsorBlock"), category: "sponsorBlock", redact: false)
     static let mpv = AppLogger(logger: Logger(subsystem: subsystem, category: "mpv"), category: "mpv", writesToDisk: false, redact: false)
     static let nowPlaying = AppLogger(logger: Logger(subsystem: subsystem, category: "NowPlaying"), category: "nowPlaying")
