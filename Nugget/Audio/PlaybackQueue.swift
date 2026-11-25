@@ -36,8 +36,7 @@ enum PlaybackQueue {
     }
 
     /// Starts a radio queue for `song`: plays it first unless already current,
-    /// then replaces the queue with the fetched radio. Used by the song and
-    /// player "Start Radio" menu actions.
+    /// then replaces the queue with the fetched radio anchored to `song.videoId`.
     static func startRadio(for song: SongItem, options: RadioOptions = .default) {
         let isCurrentSong = NowPlaying.shared.videoId == song.videoId
         if !isCurrentSong {
@@ -46,10 +45,9 @@ enum PlaybackQueue {
         }
         Task {
             guard let radio = try? await PersonalizationService.shared.fetchRadio(videoId: song.videoId, options: options),
-                  radio.songs.count > 1 else { return }
+                  !radio.songs.isEmpty else { return }
             guard NowPlaying.shared.videoId == song.videoId else { return }
-            NowPlaying.shared.queueSongs = preservingArtists(radio.songs, over: NowPlaying.shared.queueSongs)
-            NowPlaying.shared.queueIndex = radio.currentIndex
+            applyRadioQueue(radio.songs, anchoredTo: song, preferredIndex: radio.currentIndex)
         }
     }
 
@@ -60,11 +58,29 @@ enum PlaybackQueue {
         NowPlaying.shared.playCurrentSong(logContext: "playSingleWithRadio")
         Task { @MainActor in
             guard let radio = try? await PersonalizationService.shared.fetchRadio(videoId: song.videoId),
-                  radio.songs.count > 1,
+                  !radio.songs.isEmpty,
                   NowPlaying.shared.videoId == song.videoId else { return }
-            NowPlaying.shared.queueSongs = preservingArtists(radio.songs, over: NowPlaying.shared.queueSongs)
-            NowPlaying.shared.queueIndex = radio.currentIndex
+            applyRadioQueue(radio.songs, anchoredTo: song, preferredIndex: radio.currentIndex)
         }
+    }
+
+    private static func applyRadioQueue(
+        _ rawSongs: [SongItem],
+        anchoredTo song: SongItem,
+        preferredIndex: Int
+    ) {
+        var merged = preservingArtists(rawSongs, over: NowPlaying.shared.queueSongs)
+        let targetIndex: Int
+        if let existingIndex = merged.firstIndex(where: { $0.videoId == song.videoId }) {
+            targetIndex = existingIndex
+        } else {
+            let clamped = min(max(preferredIndex, 0), merged.count)
+            merged.insert(song, at: clamped)
+            targetIndex = clamped
+        }
+        NowPlaying.shared.queueSongs = merged
+        NowPlaying.shared.queueIndex = targetIndex
+        NowPlaying.shared.persistQueueState()
     }
 
     private static func preservingArtists(_ songs: [SongItem], over current: [SongItem]) -> [SongItem] {
