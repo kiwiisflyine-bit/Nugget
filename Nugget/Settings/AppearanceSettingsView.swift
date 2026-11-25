@@ -56,6 +56,8 @@ struct AppearanceSettingsView: View {
                 SettingsPickerRow("Player Background", icon: "photo", selection: $settings.playerBackgroundStyle)
             } header: {
                 Text("Player")
+            } footer: {
+                Text("Opaque uses a solid thumbnail-tinted background; Blur Transparent adds a frosted blur over the underlying view.")
             }
 
             Section {
@@ -88,7 +90,6 @@ struct AppearanceSettingsView: View {
         .miniPlayerTracksScroll()
     }
 
-    /// Applies the selected accent and selects its bundled alternate app icon.
     private func applyAppIcon(for preset: AccentPreset) {
         settings.accentName = preset.name
 
