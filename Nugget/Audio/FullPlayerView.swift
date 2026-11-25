@@ -52,7 +52,7 @@ struct FullPlayerView: View {
             ?? Color(red: 0.22, green: 0.22, blue: 0.28)
     }
 
-    private var opaqueBackgroundGradient: LinearGradient {
+    private var tintedBackgroundGradient: LinearGradient {
         if activeColorScheme == .light {
             let base = Color(red: 0.96, green: 0.96, blue: 0.98)
             return LinearGradient(
@@ -76,12 +76,13 @@ struct FullPlayerView: View {
         }
     }
 
-    private var blurTransparentOverlay: LinearGradient {
+    private var blurOverlay: LinearGradient {
+        let strength = settings.playerBlurIntensity
         if activeColorScheme == .light {
             return LinearGradient(
                 colors: [
-                    accentSeedColor.opacity(0.34),
-                    Color.white.opacity(0.72)
+                    accentSeedColor.opacity(0.2 + strength * 0.25),
+                    Color.white.opacity(0.55 + strength * 0.25)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -89,8 +90,8 @@ struct FullPlayerView: View {
         } else {
             return LinearGradient(
                 colors: [
-                    accentSeedColor.opacity(0.48),
-                    Color.black.opacity(0.72)
+                    accentSeedColor.opacity(0.3 + strength * 0.3),
+                    Color.black.opacity(0.55 + strength * 0.25)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -115,8 +116,10 @@ struct FullPlayerView: View {
                 360
             )
 
-            ZStack {
+            ZStack(alignment: .center) {
                 playerBackground
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
@@ -195,8 +198,10 @@ struct FullPlayerView: View {
                         Spacer(minLength: isCompact ? 6 : 12)
                     }
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
+            .foregroundStyle(primaryForeground)
+            .tint(primaryForeground)
             .environment(\.colorScheme, activeColorScheme)
             .offset(y: collapseOffset)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
@@ -241,9 +246,9 @@ struct FullPlayerView: View {
             case .solid:
                 activeColorScheme == .light ? Color.white : Color.black
 
-            case .opaque:
+            case .tinted:
                 ZStack {
-                    opaqueBackgroundGradient
+                    tintedBackgroundGradient
                     Circle()
                         .fill(accentSeedColor)
                         .frame(width: 420, height: 420)
@@ -251,14 +256,26 @@ struct FullPlayerView: View {
                         .opacity(activeColorScheme == .light ? 0.22 : 0.36)
                         .offset(y: -150)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
                 .animation(.easeInOut(duration: 0.6), value: np.videoId)
 
-            case .blurTransparent:
+            case .blur:
+                let radius = max(4, settings.playerBlurIntensity * 50)
                 ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                    blurTransparentOverlay
+                    if let uiImage = np.thumbnailUIImage {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .blur(radius: radius)
+                    } else {
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                    }
+                    blurOverlay
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
                 .animation(.easeInOut(duration: 0.6), value: np.videoId)
             }
         }
@@ -324,6 +341,8 @@ struct FullPlayerView: View {
                 is256AAC: np.is256AAC
             )
             .foregroundStyle(primaryForeground)
+            .tint(primaryForeground)
+            .environment(\.colorScheme, activeColorScheme)
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
@@ -333,12 +352,16 @@ struct FullPlayerView: View {
                     Task { await likeStore.toggle(song: song) }
                 }
                 .foregroundStyle(primaryForeground)
+                .tint(primaryForeground)
+                .environment(\.colorScheme, activeColorScheme)
 
                 if np.currentSong != nil {
                     PlayerOptionsButton {
                         showSongMenu = true
                     }
                     .foregroundStyle(primaryForeground)
+                    .tint(primaryForeground)
+                    .environment(\.colorScheme, activeColorScheme)
                 }
             }
         }
@@ -471,6 +494,9 @@ struct FullPlayerView: View {
                     isEditingSlider = editing
                 }
             )
+            .foregroundStyle(primaryForeground)
+            .tint(primaryForeground)
+            .environment(\.colorScheme, activeColorScheme)
 
             HStack {
                 Text(DurationFormat.playbackTime(isEditingSlider
