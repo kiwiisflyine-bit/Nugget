@@ -87,6 +87,9 @@ final class NowPlaying {
     private static let maxRecoveryAttempts = 2
     private static let recoveryWindowSeconds: TimeInterval = 60
 
+    private static let maxArtworkPixelDimension: CGFloat = 1200
+    private static let preferredMinArtworkDimension: CGFloat = 300
+
     private static let queueKey = "nowPlaying.queue"
     private static let queueIndexKey = "nowPlaying.queueIndex"
     private static let shuffleKey = "nowPlaying.shuffle"
@@ -108,7 +111,6 @@ final class NowPlaying {
               let songs = try? JSONDecoder().decode([SongItem].self, from: data),
               !songs.isEmpty else { return }
         queueSongs = songs
-        // integer(forKey:) returns 0 even when key missing – distinguish via object(forKey:)
         let storedIndex: Int
         if UserDefaults.standard.object(forKey: Self.queueIndexKey) != nil {
             storedIndex = UserDefaults.standard.integer(forKey: Self.queueIndexKey)
@@ -146,7 +148,6 @@ final class NowPlaying {
         persistQueueState()
     }
 
-    /// Ensures `queueIndex` points at a valid entry
     func repairQueueIndex() {
         if queueSongs.isEmpty {
             queueIndex = 0
@@ -167,7 +168,6 @@ final class NowPlaying {
         return Array(rest.prefix(prefixLimit))
     }
 
-    /// Shuffles upcoming songs, keeping the current one; tapping again re-shuffles.
     func shuffleQueue() {
         guard queueSongs.count > 1 else {
             isShuffleOn = true
@@ -186,14 +186,11 @@ final class NowPlaying {
         persistQueueState()
     }
 
-    /// Restore the original (unshuffled) queue order.
     func disableShuffle() {
         guard queueSongs.indices.contains(queueIndex) else { return }
         if let orig = originalQueue {
             let currentVideoId = currentSong?.videoId ?? queueSongs[queueIndex].videoId
             queueSongs = orig
-            // The shuffled index is meaningless against the original array
-            // (radio appends, deletes and reorders change lengths).
             let restored = orig.firstIndex(where: { $0.videoId == currentVideoId }) ?? queueIndex
             queueIndex = min(restored, max(orig.count - 1, 0))
         }
@@ -233,9 +230,6 @@ final class NowPlaying {
         playCurrentSong(logContext: "playPrevious")
     }
 
-    /// Starts the song at `queueIndex`: pushes metadata, persists the queue,
-    /// and resolves the stream guarded by a generation token check.
-    /// Cancels previous stale load tasks and cleanly halts stale playback on failure.
     func playCurrentSong(
         logContext: String,
         manageResolvingFlag: Bool = true,
@@ -309,7 +303,6 @@ final class NowPlaying {
         CanvasPrefetch.request(videoId: videoId, title: title, artist: self.artist, album: album)
     }
 
-    /// Convenience pushing a `SongItem`'s metadata into the player state.
     func update(with song: SongItem) {
         update(
             title: song.title,
@@ -333,10 +326,6 @@ final class NowPlaying {
         self.is256AAC = AudioQualityBadgeHelper.is256AAC(itag: itag, mimeType: mimeType, codec: codec, bitrate: bitrate)
     }
 
-    /// Records video availability: the watchable-video verdict comes from
-    /// the shared availability check (row type preferred, authoritative
-    /// lookup as fallback); this only stores it alongside the type and
-    /// pre-warms when there is one to show.
     func updateVideoAvailability(musicVideoType: String? = nil, hasVideo: Bool = false) {
         if let musicVideoType {
             self.musicVideoType = musicVideoType
@@ -347,8 +336,6 @@ final class NowPlaying {
         }
     }
 
-    /// Pre-warms artwork for the previous and upcoming songs so swiping the
-    /// mini player bar shows their art instantly.
     func preloadNeighborArtwork() {
         var urls = upcomingSongs(prefixLimit: 3)
             .compactMap(\.thumbnailUrl)
@@ -362,7 +349,6 @@ final class NowPlaying {
         Task { await ImagePreloader.shared.append(urls) }
     }
 
-    /// Artist string from `artists`, falling back to `artist`.
     var displayArtist: String {
         let fromArray = artistDisplayString(from: artists)
         if !fromArray.isEmpty { return fromArray }
@@ -392,7 +378,6 @@ final class NowPlaying {
         } else if SettingsStore.shared.autoplaySimilar, let endedVideoId = videoId {
             autoplaySimilar(from: endedVideoId)
         } else {
-            // End of queue, pause but keep the last song shown in the player.
             isPlaying = false
             stopTimer()
             PlayerController.shared.updateNowPlayingProgress()
@@ -400,8 +385,6 @@ final class NowPlaying {
         }
     }
 
-    /// Continues playback with a radio queue built from the last song when the
-    /// queue runs out and "Autoplay Similar" is enabled.
     private func autoplaySimilar(from videoId: String) {
         Task {
             do {
@@ -427,8 +410,6 @@ final class NowPlaying {
         }
     }
 
-    /// A stream that died mid-play (not EOF, not a manual skip): drop the
-    /// possibly-expired cached URL and re-resolve with a bounded retry count.
     private func recoverFromPlaybackFailure(videoId: String?) {
         guard let videoId else {
             isPlaying = false
@@ -437,8 +418,6 @@ final class NowPlaying {
         }
         PlayerController.shared.handleVideoStreamFailure()
 
-        // If playback never progressed past 0.5s, the resolved URL was rejected
-        // immediately rather than expiring mid-play; do not spin in a tight loop.
         let livePos = PlayerController.shared.currentTime
         let progressed = max(currentTime, livePos) > 0.5
 
@@ -489,16 +468,12 @@ final class NowPlaying {
     private func loadThumbnail(videoId: String, thumbnailUrl: String? = nil) {
         guard videoId != lastLoadedVideoId else { return }
         lastLoadedVideoId = videoId
-        // Safety net: callers that resolve without song metadata pass nil.
-        // The queue usually still knows this track's artwork — use it rather
-        // than falling back to the low-res ytimg default.
         var thumb = thumbnailUrl
         if thumb == nil {
             thumb = queueSongs.first { $0.videoId == videoId }?.thumbnailUrl
         }
 
         Task {
-            // For downloaded songs, try to extract embedded artwork from the local file first.
             if let localURL = await DownloadManager.shared.localURL(for: videoId) {
                 loadArtworkFromLocalFile(localURL, videoId: videoId)
                 return
@@ -533,19 +508,52 @@ final class NowPlaying {
         }
     }
 
-    /// Publishes a loaded image as the current artwork (cropped square).
+    /// Prepares artwork off the main actor: caps huge dimensions to avoid lag
+    /// while preserving the image's natural aspect ratio.
+    nonisolated private static func prepareArtwork(_ image: UIImage) -> UIImage {
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let maxSide = max(pixelWidth, pixelHeight)
+
+        guard maxSide > maxArtworkPixelDimension, maxSide > 0 else {
+            return image
+        }
+
+        let scaleFactor = maxArtworkPixelDimension / maxSide
+        let targetSize = CGSize(
+            width: max(1, (image.size.width * scaleFactor).rounded()),
+            height: max(1, (image.size.height * scaleFactor).rounded())
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+
+    nonisolated private static func isSharpEnough(_ image: UIImage) -> Bool {
+        let minSide = min(image.size.width * image.scale, image.size.height * image.scale)
+        return minSide >= preferredMinArtworkDimension
+    }
+
+    /// Publishes a loaded image as the current artwork, preserving aspect ratio.
     private func publishArtwork(_ image: UIImage) {
-        let cropped = image.centerCroppedSquare()
-        thumbnailUIImage = cropped
-        thumbnailImage = Image(uiImage: cropped)
-        thumbnailVersion &+= 1
-        updateDominantColors(from: cropped)
-        PlayerController.shared.updateNowPlayingArtwork()
+        Task.detached(priority: .userInitiated) { [weak self, videoId = self.videoId] in
+            let prepared = Self.prepareArtwork(image)
+            let colors = prepared.extractDominantColors()
+            await MainActor.run {
+                guard let self, self.videoId == videoId else { return }
+                self.thumbnailUIImage = prepared
+                self.thumbnailImage = Image(uiImage: prepared)
+                self.thumbnailVersion &+= 1
+                self.dominantColors = colors
+                PlayerController.shared.updateNowPlayingArtwork()
+            }
+        }
     }
 
     private func loadThumbnailFromCDN(videoId: String, thumbnailUrl: String? = nil) {
-        // Best source first: the track's own artwork upgraded to full
-        // resolution, then ytimg step-downs, then the guaranteed hqdefault.
         var candidates: [String] = []
         if let upgraded = ArtworkURLs.highRes(thumbnailUrl) {
             if let maxRes = ArtworkURLs.maxResVariant(upgraded) {
@@ -569,19 +577,15 @@ final class NowPlaying {
             return
         }
 
-        // Phase 1: instant paint from the best cached candidate. A lesser
-        // cached variant must not shadow a better one — Phase 2 upgrades.
         var paintedIndex: Int?
         for (index, url) in urls.enumerated() {
-            if let cached = ArtworkLoader.cachedImage(for: url) {
+            if let cached = ArtworkLoader.cachedImage(for: url), Self.isSharpEnough(cached) {
                 publishArtwork(cached)
                 paintedIndex = index
                 break
             }
         }
 
-        // Phase 2: fetch candidates better than the painted one (or all of
-        // them when nothing was painted). First success wins and swaps in.
         let fetchCount = paintedIndex ?? urls.count
         if fetchCount == 0 {
             return
@@ -590,19 +594,33 @@ final class NowPlaying {
             thumbnailImage = nil
         }
         Task {
+            var fallbackTinyImage: UIImage?
             for url in urls.prefix(fetchCount) {
                 guard lastLoadedVideoId == videoId else { return }
                 do {
                     let platformImage = try await ArtworkLoader.image(for: url)
-                    await MainActor.run {
-                        guard self.lastLoadedVideoId == videoId else { return }
-                        self.publishArtwork(platformImage)
+                    if Self.isSharpEnough(platformImage) {
+                        await MainActor.run {
+                            guard self.lastLoadedVideoId == videoId else { return }
+                            self.publishArtwork(platformImage)
+                        }
+                        return
+                    } else if fallbackTinyImage == nil {
+                        fallbackTinyImage = platformImage
                     }
-                    return
                 } catch {
                     continue
                 }
             }
+
+            if let fallbackTinyImage {
+                await MainActor.run {
+                    guard self.lastLoadedVideoId == videoId else { return }
+                    self.publishArtwork(fallbackTinyImage)
+                }
+                return
+            }
+
             if paintedIndex == nil {
                 await MainActor.run {
                     guard self.lastLoadedVideoId == videoId else { return }
@@ -626,8 +644,6 @@ final class NowPlaying {
 
     private func startTimer() {
         stopTimer()
-        // Add to `.common` so progress keeps updating while the user scrolls
-        // or drags the slider (the default mode pauses the timer).
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.timerTick()
@@ -670,9 +686,6 @@ final class NowPlaying {
 
 // MARK: - Module-level artist name cleaner
 
-/// Builds a clean, comma-separated artist string from an artist array, dropping
-/// names that clean down to empty (junk/blank entries) so no dangling separator
-/// is left behind.
 func artistDisplayString(from artists: [YTArtist]) -> String {
     artists
         .map { cleanArtistDisplay($0.name) }
@@ -683,12 +696,10 @@ func artistDisplayString(from artists: [YTArtist]) -> String {
 func cleanArtistDisplay(_ name: String) -> String {
     var tempName = name
 
-    // Strip " - Topic"
     for suffix in [" - Topic", " - topic", " - TOPIC"] where tempName.lowercased().hasSuffix(suffix.lowercased()) {
         tempName = String(tempName.dropLast(suffix.count))
     }
 
-    // Strip trailing year "(2025)" / "[2025]"
     if let r = try? NSRegularExpression(pattern: "\\s*[\\(\\[]\\d{4}[\\)\\]]\\s*$") {
         tempName = r.stringByReplacingMatches(
             in: tempName,
@@ -697,7 +708,6 @@ func cleanArtistDisplay(_ name: String) -> String {
         )
     }
 
-    // Split on commas, ampersands, and bullet separators (•, ·, |) then drop junk segments
     let separatorSet = CharacterSet(charactersIn: ",&•·|")
     let parts = tempName
         .components(separatedBy: separatorSet)
@@ -723,10 +733,9 @@ private func _isJunkArtistSegment(_ segment: String) -> Bool {
     if junkLabels.contains(lower) { return true }
 
     let patterns = [
-        // Number optionally followed by K/M/B/T and an optional metric word
         "^[\\d,\\.]+[KMBT]?\\s*(views|downloads|listeners|subscribers|plays|watchers|likes?)?$",
-        "^\\d{4}$",              // bare year
-        "^[\\d,\\.\\s]+[KMBT]?$" // purely numeric / abbreviated counts
+        "^\\d{4}$",
+        "^[\\d,\\.\\s]+[KMBT]?$"
     ]
     for pattern in patterns where lower.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil {
         return true
