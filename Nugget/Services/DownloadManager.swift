@@ -32,6 +32,7 @@ final class DownloadManager: ObservableObject {
     }
 
     private static let minimumAudioBytes = 8_192
+    private static let preferredMinArtworkDimension: CGFloat = 480
 
     private let fileManager = FileManager.default
     private let pathMonitor = NWPathMonitor()
@@ -248,7 +249,7 @@ final class DownloadManager: ObservableObject {
                 title: metadata?.title ?? Self.displayTitle(from: url),
                 artist: metadata?.artistName ?? "",
                 duration: metadata?.duration ?? 0,
-                thumbnailUrl: metadata?.thumbnailUrl,
+                thumbnailUrl: Self.bestStoredThumbnailUrl(metadata?.thumbnailUrl, videoId: videoId),
                 localPath: storedPath(for: url),
                 downloadedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey])
                     .contentModificationDate) ?? Date(),
@@ -316,6 +317,16 @@ final class DownloadManager: ObservableObject {
         return base.isEmpty ? url.lastPathComponent : base
     }
 
+    nonisolated private static func bestStoredThumbnailUrl(_ rawUrl: String?, videoId: String) -> String? {
+        if let rawUrl, !rawUrl.isEmpty {
+            if let upgraded = ArtworkURLs.highRes(rawUrl) {
+                return upgraded
+            }
+            return rawUrl
+        }
+        return ArtworkURLs.fallback(for: videoId)
+    }
+
     private func songMetadata(for videoId: String) async -> SongEntity? {
         try? await DatabaseService.shared.fetchOne(SongEntity.self, key: videoId)
     }
@@ -370,7 +381,7 @@ extension DownloadManager {
                 try? fileManager.removeItem(at: fileURL)
             }
 
-            async let artworkData = prefetchArtwork(from: song.thumbnailUrl)
+            async let artworkData = prefetchArtwork(from: song.thumbnailUrl, videoId: videoId)
 
             setProgress(0.05, for: videoId)
             let resolveStart = CFAbsoluteTimeGetCurrent()
@@ -458,7 +469,7 @@ extension DownloadManager {
                 title: song.title,
                 artist: artist,
                 duration: song.duration,
-                thumbnailUrl: song.thumbnailUrl,
+                thumbnailUrl: Self.bestStoredThumbnailUrl(song.thumbnailUrl, videoId: videoId),
                 localPath: storedPath(for: fileURL),
                 downloadedAt: Date(),
                 itag: result.itag,
@@ -500,7 +511,7 @@ extension DownloadManager {
             title: song.title,
             artist: song.artists.map(\.name).joined(separator: ", "),
             duration: song.duration,
-            thumbnailUrl: song.thumbnailUrl,
+            thumbnailUrl: Self.bestStoredThumbnailUrl(song.thumbnailUrl, videoId: song.videoId),
             localPath: storedPath(for: url),
             downloadedAt: (try? url.resourceValues(forKeys: [.contentModificationDateKey])
                 .contentModificationDate) ?? Date(),
@@ -630,10 +641,40 @@ extension DownloadManager {
         downloads[videoId] = .downloading(clamped)
     }
 
-    private func prefetchArtwork(from thumbnailUrl: String?) async -> Data? {
-        guard let thumbUrl = thumbnailUrl, let url = URL(string: thumbUrl) else { return nil }
-        guard let image = try? await ArtworkLoader.image(for: url) else { return nil }
-        return image.jpegData(compressionQuality: 0.9)
+    private func prefetchArtwork(from thumbnailUrl: String?, videoId: String) async -> Data? {
+        var candidates: [String] = []
+        if let highRes = ArtworkURLs.highRes(thumbnailUrl) {
+            candidates.append(highRes)
+        }
+        if let maxRes = ArtworkURLs.maxResVariant(thumbnailUrl), !candidates.contains(maxRes) {
+            candidates.append(maxRes)
+        }
+        if let sdRes = ArtworkURLs.sdVariant(thumbnailUrl), !candidates.contains(sdRes) {
+            candidates.append(sdRes)
+        }
+        let fallback = ArtworkURLs.fallback(for: videoId)
+        if !candidates.contains(fallback) {
+            candidates.append(fallback)
+        }
+
+        let urls = candidates.compactMap(URL.init(string:))
+        var bestImage: UIImage?
+        var bestArea: CGFloat = 0
+
+        for url in urls {
+            guard let image = try? await ArtworkLoader.image(for: url) else { continue }
+            let maxSide = max(image.size.width * image.scale, image.size.height * image.scale)
+            let area = (image.size.width * image.scale) * (image.size.height * image.scale)
+            if maxSide >= Self.preferredMinArtworkDimension {
+                return image.jpegData(compressionQuality: 0.9)
+            }
+            if area > bestArea {
+                bestArea = area
+                bestImage = image
+            }
+        }
+
+        return bestImage?.jpegData(compressionQuality: 0.9)
     }
 
     // MARK: - File Transfer (ffmpeg)
