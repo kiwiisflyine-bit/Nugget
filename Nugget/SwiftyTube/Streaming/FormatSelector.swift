@@ -35,6 +35,10 @@ public enum FormatSelector: Sendable {
         return h264.isEmpty ? formats : h264
     }
 
+    private static func hasFetchableSource(_ format: Format) -> Bool {
+        (format.url?.isEmpty == false) || format.signatureCipher != nil || format.cipher != nil
+    }
+
     /// Ordered list of candidate audio formats, starting with best match and falling back cleanly.
     public static func candidateAudioFormats(from formats: [Format], preference: AudioQuality = .auto) -> [Format] {
         guard !formats.isEmpty else {
@@ -42,12 +46,27 @@ public enum FormatSelector: Sendable {
             return []
         }
 
-        guard let audioFormats = audioBearingFormats(formats) else { return [] }
+        let audioOnly = formats.filter { $0.isAudioOnly }
+        let fetchableAudioOnly = audioOnly.filter { hasFetchableSource($0) }
 
-        let fetchable = audioFormats.filter {
-            ($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil
+        let pool: [Format]
+        if !fetchableAudioOnly.isEmpty {
+            pool = fetchableAudioOnly
+        } else {
+            let fetchableMuxed = formats.filter {
+                !$0.isAudioOnly && $0.audioChannels != nil && hasFetchableSource($0)
+            }
+            if !fetchableMuxed.isEmpty {
+                SwiftyTubeLog.debug(
+                    "No fetchable audio-only formats; falling back to \(fetchableMuxed.count) fetchable muxed format(s)"
+                )
+                pool = fetchableMuxed
+            } else {
+                guard let audioFormats = audioBearingFormats(formats) else { return [] }
+                let fetchable = audioFormats.filter { hasFetchableSource($0) }
+                pool = fetchable.isEmpty ? audioFormats : fetchable
+            }
         }
-        let pool = fetchable.isEmpty ? audioFormats : fetchable
 
         if preference == .aac256 {
             var candidates: [Format] = []
@@ -138,9 +157,7 @@ public enum FormatSelector: Sendable {
         guard let audioFormats = audioBearingFormats(formats) else { return nil }
 
         // Prefer formats we can actually fetch (direct URL or cipher).
-        let fetchable = audioFormats.filter {
-            ($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil
-        }
+        let fetchable = audioFormats.filter { hasFetchableSource($0) }
         let candidates = fetchable.isEmpty ? audioFormats : fetchable
 
         let aacFormats = candidates.filter { format in
@@ -223,7 +240,7 @@ public enum FormatSelector: Sendable {
             !$0.isAudioOnly
                 && $0.width != nil && $0.height != nil
                 && $0.audioChannels != nil
-                && (($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil)
+                && hasFetchableSource($0)
         }
 
         guard !muxedFormats.isEmpty else {
@@ -277,7 +294,7 @@ public enum FormatSelector: Sendable {
             !$0.isAudioOnly
                 && $0.width != nil && $0.height != nil
                 && $0.audioChannels == nil
-                && (($0.url?.isEmpty == false) || $0.signatureCipher != nil || $0.cipher != nil)
+                && hasFetchableSource($0)
         }
 
         guard !videoOnlyFormats.isEmpty else {
