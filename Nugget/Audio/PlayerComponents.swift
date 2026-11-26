@@ -62,11 +62,17 @@ struct PlayerPlayPauseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: 42))
-                .foregroundStyle(playerInkColor(for: colorScheme))
-                .contentTransition(.symbolEffect(.replace))
+            ZStack {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 42, weight: .regular))
+                    .foregroundStyle(playerInkColor(for: colorScheme))
+                    .id(isPlaying)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+            .frame(width: 56, height: 56)
+            .animation(.easeInOut(duration: 0.14), value: isPlaying)
         }
+        .buttonStyle(.plain)
         .frame(width: 80, height: 80)
         .accessibilityLabel(isPlaying ? "Pause" : "Play")
     }
