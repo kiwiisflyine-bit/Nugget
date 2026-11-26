@@ -31,10 +31,6 @@ struct FullPlayerView: View {
     @State private var artworkEntryOffset: CGFloat = 0
     @State private var canvasDominantColors: [Color]?
 
-    private struct ArtworkScaleKeyframes {
-        var scale: CGFloat = 1.0
-    }
-
     private var activeColorScheme: ColorScheme {
         settings.preferredColorScheme ?? environmentColorScheme
     }
@@ -143,7 +139,7 @@ struct FullPlayerView: View {
                             .contentShape(Rectangle().size(width: 60, height: 30))
                             .onTapGesture {
                                 guard showLyrics else { return }
-                                withAnimation(.easeInOut(duration: 0.3)) {
+                                withAnimation(.easeInOut(duration: 0.24)) {
                                     showLyrics = false
                                 }
                             }
@@ -193,6 +189,7 @@ struct FullPlayerView: View {
                             .foregroundStyle(primaryForeground)
                             .tint(primaryForeground)
                             .environment(\.colorScheme, activeColorScheme)
+                            .animation(.easeInOut(duration: 0.16), value: np.isPlaying)
                             .scaleEffect(isCompact ? 0.94 : 1)
                             .padding(.bottom, isCompact ? 4 : 10)
 
@@ -221,8 +218,8 @@ struct FullPlayerView: View {
         .toolbar(.hidden, for: .tabBar)
         .ignoresSafeArea()
         .offset(y: collapseOffset)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
-        .animation(.easeInOut(duration: 0.35), value: showQueue)
+        .animation(.easeInOut(duration: 0.24), value: collapseOffset)
+        .animation(.easeInOut(duration: 0.24), value: showQueue)
         .simultaneousGesture(collapseDrag)
         .onChange(of: np.videoId) { _, _ in
             np.isVideoMode = false
@@ -274,7 +271,7 @@ struct FullPlayerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-                .animation(.easeInOut(duration: 0.6), value: np.videoId)
+                .animation(.easeInOut(duration: 0.45), value: np.videoId)
 
             case .blur:
                 let blurIntensity = min(max(settings.playerBlurIntensity, 0), 1)
@@ -287,8 +284,8 @@ struct FullPlayerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.35), value: blurIntensity)
-                .animation(.easeInOut(duration: 0.35), value: transparentIntensity)
+                .animation(.easeInOut(duration: 0.25), value: blurIntensity)
+                .animation(.easeInOut(duration: 0.25), value: transparentIntensity)
             }
         }
     }
@@ -323,7 +320,7 @@ struct FullPlayerView: View {
 
     private func slideInArtwork(fromLeft: Bool) {
         artworkEntryOffset = fromLeft ? -600 : 600
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(.easeInOut(duration: 0.24)) {
             artworkEntryOffset = 0
         }
     }
@@ -400,7 +397,7 @@ struct FullPlayerView: View {
         VStack(spacing: 0) {
             HStack {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    withAnimation(.easeInOut(duration: 0.24)) {
                         np.isVideoMode = false
                         showQueue = false
                     }
@@ -446,7 +443,7 @@ struct FullPlayerView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
-        .animation(.easeOut(duration: 0.2), value: np.isVideoReady)
+        .animation(.easeOut(duration: 0.18), value: np.isVideoReady)
     }
 
     private func artworkCard(maxHeight: CGFloat, horizontalPadding: CGFloat) -> some View {
@@ -470,24 +467,9 @@ struct FullPlayerView: View {
             x: 0,
             y: 12
         )
-        .keyframeAnimator(
-            initialValue: ArtworkScaleKeyframes(scale: np.isPlaying ? 1.0 : 0.75),
-            trigger: np.isPlaying
-        ) { content, value in
-            content.scaleEffect(value.scale)
-        } keyframes: { _ in
-            KeyframeTrack(\.scale) {
-                if !np.isPlaying {
-                    CubicKeyframe(0.84, duration: 0.24)
-                    CubicKeyframe(0.70, duration: 0.22)
-                    SpringKeyframe(0.75, duration: 0.28, spring: .init(response: 0.26, dampingRatio: 0.52))
-                } else {
-                    CubicKeyframe(0.91, duration: 0.24)
-                    CubicKeyframe(1.05, duration: 0.22)
-                    SpringKeyframe(1.00, duration: 0.28, spring: .init(response: 0.26, dampingRatio: 0.52))
-                }
-            }
-        }
+        // Clean parabolic / ease-in-out scale without any bounce or overshoot
+        .scaleEffect(np.isPlaying ? 1.0 : 0.78)
+        .animation(.easeInOut(duration: 0.24), value: np.isPlaying)
         .offset(x: artworkEntryOffset)
         .gesture(artworkSwipe)
         .onTapGesture {
