@@ -27,41 +27,43 @@ struct AsyncImageView: View {
                     placeholderView
                 }
             }
-            .task(id: url) {
+            .task(id: "\(url ?? "")|\(contentMode)") {
                 await loadImage(targetSize: geometry.size)
             }
         }
     }
 
     private func loadImage(targetSize: CGSize) async {
-        guard let urlString = url else {
+        guard let urlString = url, !urlString.isEmpty else {
             loadedImage = nil
             return
         }
-        let scale = displayScale
-        // Prevent zero-size layout passes from causing degenerate image cache requests.
-        let minPixels: CGFloat = 120 * scale
-        let displaySize = CGSize(
-            width: max(targetSize.width * scale, minPixels),
-            height: max(targetSize.height * scale, minPixels)
-        )
-        // Request the ladder rung covering this surface (BitChord-style),
-        // so rows, cards and headers each share one cache entry.
-        let rung = ArtworkURLs.rung(for: max(displaySize.width, displaySize.height))
+        let scale = max(displayScale, 1)
+        let rawPixels = max(targetSize.width * scale, targetSize.height * scale)
+        let rung = ArtworkURLs.rung(for: rawPixels)
         let normalized = normalizeThumbnailURL(urlString, pixels: rung)
-        guard let url = URL(string: normalized) else {
+        guard let resolvedURL = URL(string: normalized) else {
             loadedImage = nil
             return
         }
+
+        let targetPx = CGFloat(rung)
         let request: ImageRequest
         if contentMode == .fill {
             request = ImageRequest(
-                url: url,
-                processors: [.resize(size: displaySize, unit: .pixels, contentMode: .aspectFill)]
+                url: resolvedURL,
+                processors: [
+                    .resize(
+                        size: CGSize(width: targetPx, height: targetPx),
+                        unit: .pixels,
+                        contentMode: .aspectFill
+                    )
+                ]
             )
         } else {
-            request = ImageRequest(url: url)
+            request = ImageRequest(url: resolvedURL)
         }
+
         do {
             let image = try await ImagePipeline.shared.image(for: request)
             guard !Task.isCancelled else { return }
@@ -85,27 +87,11 @@ struct AsyncImageView: View {
 }
 
 private func normalizeThumbnailURL(_ urlString: String, pixels: Int) -> String {
-    var url = urlString
-
-    url = url.replacingOccurrences(of: "(?<=[sh]\\d+)-c", with: "", options: .regularExpression)
-
-    if url.contains("googleusercontent.com") || url.contains("ggpht.com") {
-        if let match = try? NSRegularExpression(pattern: "w(\\d+)-h(\\d+)"),
-           let result = match.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)),
-           let wRange = Range(result.range(at: 1), in: url),
-           let hRange = Range(result.range(at: 2), in: url),
-           let w = Int(url[wRange]),
-           let h = Int(url[hRange]) {
-            let size = "w\(pixels)-h\(pixels)"
-            if size != "w\(w)-h\(h)" {
-                url = url.replacingOccurrences(of: "w\(w)-h\(h)", with: size)
-            }
-        } else if let base = url.split(separator: "=").first {
-            // Bare CDN URL with no size params: pin an explicit size instead
-            // of trusting the server default.
-            url = String(base) + "=w\(pixels)-h\(pixels)"
-        }
+    if urlString.contains("googleusercontent.com") || urlString.contains("ggpht.com") {
+        return ArtworkURLs.artwork(urlString, at: pixels) ?? urlString
     }
-
-    return url
+    if urlString.contains("i.ytimg.com/vi/"), pixels >= ArtworkURLs.cardPx {
+        return ArtworkURLs.sdVariant(urlString) ?? urlString
+    }
+    return urlString
 }
