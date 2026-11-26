@@ -20,6 +20,7 @@ struct MarqueeText: View {
     @State private var animationTask: Task<Void, Never>?
     @State private var measuredWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
+    @State private var scrollCycleID = UUID()
 
     // MARK: - Constants
     private let fadeWidth: CGFloat = 12
@@ -48,8 +49,10 @@ struct MarqueeText: View {
                     .fixedSize()
                     .background(TextWidthReader())
                     .offset(x: offset)
+                    .animation(isAnimating ? nil : .none, value: offset)
                     .foregroundStyle(textColor)
             }
+            .id(scrollCycleID)
             .frame(width: width, height: geo.size.height, alignment: .leading)
             .clipped()
             .mask(fadeMask(width: width))
@@ -83,6 +86,7 @@ struct MarqueeText: View {
             guard oldText != newText else { return }
             stop()
             measuredWidth = 0
+            scrollCycleID = UUID()
             ensureTask()
         }
     }
@@ -121,12 +125,13 @@ struct MarqueeText: View {
             return
         }
 
+        let currentCycle = scrollCycleID
         animationTask = Task { @MainActor in
-            while !Task.isCancelled {
+            while !Task.isCancelled && scrollCycleID == currentCycle {
                 resetOffset()
 
                 try? await Task.sleep(nanoseconds: startDelay)
-                guard !Task.isCancelled else { break }
+                guard !Task.isCancelled && scrollCycleID == currentCycle else { break }
 
                 guard shouldScroll else {
                     break
@@ -141,10 +146,10 @@ struct MarqueeText: View {
                 }
 
                 try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-                guard !Task.isCancelled else { break }
+                guard !Task.isCancelled && scrollCycleID == currentCycle else { break }
 
                 try? await Task.sleep(nanoseconds: endPause)
-                guard !Task.isCancelled else { break }
+                guard !Task.isCancelled && scrollCycleID == currentCycle else { break }
             }
             if !Task.isCancelled {
                 animationTask = nil
@@ -166,12 +171,12 @@ struct MarqueeText: View {
 
     // MARK: - Reset position
     private func resetOffset() {
+        isAnimating = false
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             offset = 0
         }
-        isAnimating = false
     }
 
     private func animationCurve(duration: Double) -> Animation {
