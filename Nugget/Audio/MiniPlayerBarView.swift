@@ -13,7 +13,7 @@ import Nuke
 /// together, exactly tracking the drag state. When the tab bar minimizes on
 /// scroll the bar collapses into a compact inline form that merges with the
 /// tab bar, matching the Apple Music behavior; otherwise it renders as the
-/// 48pt floating glass capsule with a bottom progress line.
+/// 48pt floating glass capsule.
 struct MiniPlayerBarView: View {
     let onExpand: () -> Void
 
@@ -72,7 +72,6 @@ struct MiniPlayerBarView: View {
         }
         .frame(height: barHeight)
         .frame(maxWidth: .infinity)
-        .overlay(alignment: .bottom) { progressLine }
         .clipShape(Capsule())
         .onChange(of: np.videoId) { _, _ in
             dragOffset = 0
@@ -113,8 +112,9 @@ struct MiniPlayerBarView: View {
                         .offset(x: pageWidth)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .frame(width: pageWidth, height: barHeight, alignment: .center)
             .offset(x: dragOffset)
+            .frame(width: pageWidth, height: barHeight, alignment: .center)
             .clipped()
             .mask(trailingFadeMask)
             .contentShape(Rectangle())
@@ -166,9 +166,10 @@ struct MiniPlayerBarView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: width, alignment: .leading)
         .padding(.leading, 14)
         .padding(.trailing, 8)
+        .frame(width: width, height: barHeight, alignment: .leading)
+        .clipped()
         .contentShape(Rectangle())
     }
 
@@ -200,7 +201,7 @@ struct MiniPlayerBarView: View {
             Image(systemName: np.isPlaying ? "pause.fill" : "play.fill")
                 .contentTransition(.symbolEffect(.replace))
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.tint)
+                .foregroundStyle(titleColor)
                 .frame(width: 28, height: 28)
         })
         .buttonStyle(.plain)
@@ -211,23 +212,12 @@ struct MiniPlayerBarView: View {
         Button(action: { np.playNext() }, label: {
             Image(systemName: "forward.fill")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(np.hasNext ? Color.primary : Color.primary.opacity(0.35))
+                .foregroundStyle(np.hasNext ? titleColor : titleColor.opacity(0.35))
                 .frame(width: 28, height: 28)
         })
         .buttonStyle(.plain)
         .disabled(!np.hasNext)
         .accessibilityLabel("Next track")
-    }
-
-    private var progressLine: some View {
-        GeometryReader { geo in
-            let progressWidth = max(0, min(geo.size.width, geo.size.width * CGFloat(np.progress)))
-            Rectangle()
-                .fill(.tint)
-                .frame(width: progressWidth, height: 2)
-        }
-        .frame(height: 2)
-        .allowsHitTesting(false)
     }
 
     // MARK: - Data
