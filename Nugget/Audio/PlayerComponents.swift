@@ -60,90 +60,28 @@ struct PlayerPlayPauseButton: View {
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var symbolScale: CGFloat = 1.0
-    @State private var symbolOpacity: Double = 1.0
-    @State private var displayedPlaying: Bool = NowPlaying.shared.isPlaying
-    @State private var transitionTask: Task<Void, Never>?
+    private static let transitionDuration: TimeInterval = 0.16
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                Image(systemName: displayedPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .id(isPlaying)
                     .font(.system(size: 42, weight: .regular))
                     .foregroundStyle(playerInkColor(for: colorScheme))
-                    .scaleEffect(symbolScale)
-                    .opacity(symbolOpacity)
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.86).combined(with: .opacity),
+                            removal: .scale(scale: 0.86).combined(with: .opacity)
+                        )
+                    )
             }
             .frame(width: 56, height: 56)
         }
         .buttonStyle(.plain)
         .frame(width: 80, height: 80)
+        .animation(.easeInOut(duration: Self.transitionDuration), value: isPlaying)
         .accessibilityLabel(isPlaying ? "Pause" : "Play")
-        .onAppear {
-            displayedPlaying = isPlaying
-            symbolScale = 1.0
-            symbolOpacity = 1.0
-        }
-        .onChange(of: isPlaying) { _, newValue in
-            runSymbolTransition(to: newValue)
-        }
-        .onDisappear {
-            transitionTask?.cancel()
-            transitionTask = nil
-        }
-    }
-
-    private func runSymbolTransition(to newPlaying: Bool) {
-        transitionTask?.cancel()
-
-        transitionTask = Task { @MainActor in
-            // 1. 100% -> 70%
-            let t1: TimeInterval = 0.14
-            withAnimation(.easeInOut(duration: t1)) {
-                symbolScale = 0.70
-            }
-            try? await Task.sleep(nanoseconds: UInt64(t1 * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-
-            // 2. Super-fast zip from 70% -> 0%
-            let t2: TimeInterval = 0.05
-            withAnimation(.easeIn(duration: t2)) {
-                symbolScale = 0.001
-                symbolOpacity = 0.0
-            }
-            try? await Task.sleep(nanoseconds: UInt64(t2 * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-
-            // Swap symbol at 0%
-            var swapTx = Transaction()
-            swapTx.disablesAnimations = true
-            withTransaction(swapTx) {
-                displayedPlaying = newPlaying
-                symbolScale = 0.001
-                symbolOpacity = 1.0
-            }
-
-            // 3. Super-fast zip from 0% -> 70%
-            let t3: TimeInterval = 0.05
-            withAnimation(.easeOut(duration: t3)) {
-                symbolScale = 0.70
-            }
-            try? await Task.sleep(nanoseconds: UInt64(t3 * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-
-            // 4. 70% -> 105%
-            let t4: TimeInterval = 0.15
-            withAnimation(.easeInOut(duration: t4)) {
-                symbolScale = 1.05
-            }
-            try? await Task.sleep(nanoseconds: UInt64(t4 * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-
-            // 5. Bounce from 105% -> 100%
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.52)) {
-                symbolScale = 1.0
-            }
-        }
     }
 }
 
@@ -206,7 +144,7 @@ struct PlayerTransportAirPlayFooter: View {
                 onPlayPause: onPlayPause,
                 onNext: onNext
             )
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPlaying)
+            .animation(.easeInOut(duration: 0.16), value: isPlaying)
 
             HStack {
                 Spacer()
@@ -242,7 +180,7 @@ struct SecondaryActionsRow: View {
         HStack(spacing: 0) {
             // Left: Lyrics toggle
             Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
+                withAnimation(.easeInOut(duration: 0.24)) {
                     showLyrics.toggle()
                 }
             } label: {
