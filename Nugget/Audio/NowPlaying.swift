@@ -100,7 +100,7 @@ final class NowPlaying {
     }
 
     deinit {
-        Task { @MainActor [weak self] in self?.stopTimer() }
+        timer?.invalidate()
     }
 
     // MARK: - Persistent queue
