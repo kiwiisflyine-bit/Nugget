@@ -349,7 +349,7 @@ struct FullPlayerView: View {
     }
 
     private var titleAndActionsRow: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             PlayerTitleBlock(
                 title: np.title,
                 artist: np.displayArtist,
@@ -388,6 +388,7 @@ struct FullPlayerView: View {
                     .environment(\.colorScheme, activeColorScheme)
                 }
             }
+            .offset(y: -4)
         }
     }
 
@@ -445,8 +446,7 @@ struct FullPlayerView: View {
     }
 
     private func artworkCard(maxHeight: CGFloat, horizontalPadding: CGFloat) -> some View {
-        let cornerRadius: CGFloat = 16
-        return ZStack {
+        ZStack {
             artworkImage
             CanvasVideoView(
                 videoId: np.videoId,
@@ -460,7 +460,6 @@ struct FullPlayerView: View {
         }
         .aspectRatio(artworkAspectRatio, contentMode: .fit)
         .frame(maxHeight: maxHeight)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .shadow(
             color: Color.black.opacity(activeColorScheme == .light ? 0.18 : 0.42),
             radius: 22,
@@ -486,7 +485,7 @@ struct FullPlayerView: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                Rectangle()
                     .fill(primaryForeground.opacity(0.1))
                     .overlay {
                         Image(systemName: "music.note")
