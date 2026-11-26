@@ -476,14 +476,12 @@ struct FullPlayerView: View {
         ) { content, value in
             content.scaleEffect(value.scale)
         } keyframes: { _ in
-            if !np.isPlaying {
-                KeyframeTrack(\.scale) {
+            KeyframeTrack(\.scale) {
+                if !np.isPlaying {
                     CubicKeyframe(0.84, duration: 0.24)
                     CubicKeyframe(0.70, duration: 0.22)
                     SpringKeyframe(0.75, duration: 0.28, spring: .init(response: 0.26, dampingRatio: 0.52))
-                }
-            } else {
-                KeyframeTrack(\.scale) {
+                } else {
                     CubicKeyframe(0.91, duration: 0.24)
                     CubicKeyframe(1.05, duration: 0.22)
                     SpringKeyframe(1.00, duration: 0.28, spring: .init(response: 0.26, dampingRatio: 0.52))
