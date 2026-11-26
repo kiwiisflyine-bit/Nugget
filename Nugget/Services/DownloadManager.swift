@@ -37,9 +37,14 @@ final class DownloadManager: ObservableObject {
     private let pathMonitor = NWPathMonitor()
     private var currentPath: NWPath?
     private var isReloading = false
+    private var isMutatingLibrary = false
     private var cancelledDownloadIds: Set<String> = []
     private var lastReportedProgress: [String: Double] = [:]
     private var activeFFmpegSessions: [String: FFmpegSession] = [:]
+
+    private var downloadQueue: [SongItem] = []
+    private var queuedIds: Set<String> = []
+    private var isProcessingQueue = false
 
     private var tracksById: [String: DownloadedTrackEntity] = [:]
 
@@ -71,10 +76,78 @@ final class DownloadManager: ObservableObject {
     }
 
     private var isOnWiFi: Bool {
-        // Until the first path update arrives, don't block downloads.
         guard let currentPath else { return true }
         return currentPath.usesInterfaceType(.wifi) == true
             || currentPath.usesInterfaceType(.wiredEthernet) == true
+    }
+
+    // MARK: - Sequential Bulk Queue & Removals
+
+    func enqueueDownloads(songs: [SongItem]) {
+        for song in songs where !queuedIds.contains(song.videoId) {
+            if state(for: song.videoId) == .completed { continue }
+            if case .downloading = downloads[song.videoId] { continue }
+            queuedIds.insert(song.videoId)
+            downloadQueue.append(song)
+        }
+        guard !isProcessingQueue else { return }
+        Task { await drainDownloadQueue() }
+    }
+
+    private func drainDownloadQueue() async {
+        guard !isProcessingQueue else { return }
+        isProcessingQueue = true
+        defer { isProcessingQueue = false }
+
+        while !downloadQueue.isEmpty {
+            let next = downloadQueue.removeFirst()
+            queuedIds.remove(next.videoId)
+            await download(song: next)
+        }
+    }
+
+    func removeDownloads(videoIds: [String]) async {
+        guard !videoIds.isEmpty else { return }
+        let uniqueIds = Array(Set(videoIds))
+
+        for id in uniqueIds {
+            queuedIds.remove(id)
+            downloadQueue.removeAll { $0.videoId == id }
+            cancelledDownloadIds.insert(id)
+            if let session = activeFFmpegSessions.removeValue(forKey: id) {
+                session.cancel()
+            }
+            lastReportedProgress.removeValue(forKey: id)
+            downloads[id] = .notStarted
+            tracksById.removeValue(forKey: id)
+        }
+        apply(tracksById)
+
+        let dirURL = downloadsDir
+        let fm = fileManager
+        await Task.detached(priority: .utility) {
+            let urls = (try? fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            let idSet = Set(uniqueIds)
+            for url in urls where url.pathExtension.lowercased() == "m4a" {
+                if let vid = Self.videoId(from: url.lastPathComponent), idSet.contains(vid) {
+                    try? fm.removeItem(at: url)
+                }
+            }
+        }.value
+
+        try? await DatabaseService.shared.write { db in
+            for chunk in DatabaseService.chunked(uniqueIds) {
+                let placeholders = DatabaseService.placeholders(count: chunk.count)
+                try db.execute(
+                    sql: "DELETE FROM downloaded_track WHERE id IN (\(placeholders))",
+                    arguments: StatementArguments(chunk)
+                )
+            }
+        }
     }
 
     // MARK: - Paths
@@ -94,8 +167,6 @@ final class DownloadManager: ObservableObject {
         return downloadsDir.appendingPathComponent("\(stem) [\(videoId)].m4a")
     }
 
-    /// Strips characters illegal on filesystems, trims whitespace/dots and
-    /// caps length for APFS's 255-byte limit.
     nonisolated static func sanitizeFileName(_ name: String) -> String {
         var stem = name.replacingOccurrences(of: "/", with: "-")
         let illegal = CharacterSet(charactersIn: ":\\?%*|\"<>").union(.controlCharacters)
@@ -106,7 +177,6 @@ final class DownloadManager: ObservableObject {
         return stem.isEmpty ? "Untitled" : stem
     }
 
-    /// AAC transcode bitrate for the download quality preference.
     nonisolated static func transcodeBitrate(for quality: DownloadQuality) -> Int {
         switch quality {
         case .aac256: return 256_000
@@ -146,9 +216,6 @@ final class DownloadManager: ObservableObject {
 
     // MARK: - Reload / reconciliation
 
-    /// Rebuilds the library from the database and the Downloads directory.
-    /// Orphaned files are adopted, rows whose files vanished are dropped and
-    /// stale absolute paths are rewritten relative to the current container.
     func reload() async {
         guard !isReloading else { return }
         isReloading = true
@@ -232,7 +299,6 @@ final class DownloadManager: ObservableObject {
         return found
     }
 
-    /// Extracts the video id from `Artist - Title [<id>].m4a`.
     nonisolated static func videoId(from fileName: String) -> String? {
         let base = (fileName as NSString).deletingPathExtension
         guard let range = base.range(of: #"\[([A-Za-z0-9_-]{6,})\]$"#, options: .regularExpression) else {
@@ -343,7 +409,6 @@ extension DownloadManager {
             setProgress(0.88, for: videoId)
             let ffmpegStart = CFAbsoluteTimeGetCurrent()
             if isAACStream {
-                // AVFoundation can open AAC/MP4; validate before remux.
                 let validateStart = CFAbsoluteTimeGetCurrent()
                 try await validateDownloadedFile(at: tempDownload)
                 Log.downloadManager.debug("VALIDATE \(String(format: "%.1f", CFAbsoluteTimeGetCurrent() - validateStart))s")
@@ -358,8 +423,6 @@ extension DownloadManager {
                 )
                 try fileManager.moveItem(at: tempDownload, to: fileURL)
             } else {
-                // WebM/Opus is not readable by AVFoundation — transcode first,
-                // then validate the generated .m4a.
                 Log.downloadManager.debug("FFMPEG transcode (Opus -> AAC)...")
                 try await processAudio(
                     TranscodeRequest(
@@ -480,7 +543,6 @@ extension DownloadManager {
     private func validateDownloadedFile(at url: URL) async throws {
         let values = try url.resourceValues(forKeys: [.fileSizeKey])
         let size = values.fileSize ?? 0
-        // Real audio streams are well above this; error/HTML bodies are not.
         guard size >= Self.minimumAudioBytes else {
             Log.downloadManager.error("Downloaded file too small (\(size) bytes) — likely a dead stream URL")
             throw DownloadError.invalidStreamURL
@@ -546,6 +608,8 @@ extension DownloadManager {
     }
 
     private func cancelAllActiveDownloads() {
+        downloadQueue.removeAll()
+        queuedIds.removeAll()
         for (videoId, state) in downloads {
             if case .downloading = state {
                 cancelledDownloadIds.insert(videoId)
@@ -615,14 +679,12 @@ extension DownloadManager {
 
         try await runFFmpeg(arguments: args, videoId: videoId) { [weak self] size in
             Task { @MainActor in
-                // Asymptotic map so unknown Content-Length still moves the bar.
                 let fraction = 0.05 + 0.80 * (1 - exp(-Double(size) / 5_000_000))
                 self?.setProgress(fraction, for: videoId)
             }
         }
     }
 
-    /// Runs FFmpeg off the main actor via the async API; optionally reports size stats.
     private func runFFmpeg(
         arguments: [String],
         videoId: String? = nil,
@@ -683,45 +745,36 @@ extension DownloadManager {
 
 extension DownloadManager {
     func delete(videoId: String) async {
-        cancelledDownloadIds.insert(videoId)
-        if let session = activeFFmpegSessions.removeValue(forKey: videoId) {
-            session.cancel()
-        }
-        lastReportedProgress.removeValue(forKey: videoId)
-        downloads[videoId] = .notStarted
-        tracksById.removeValue(forKey: videoId)
-
-        if let entity = try? await DatabaseService.shared.fetchOne(DownloadedTrackEntity.self, key: videoId) {
-            if let url = resolvedURL(for: entity) {
-                try? fileManager.removeItem(at: url)
-            }
-            _ = try? await DatabaseService.shared.delete(entity)
-        }
-        // Also remove any orphaned file matching this id.
-        if let scanned = scanDownloadedFiles()[videoId] {
-            try? fileManager.removeItem(at: scanned)
-        }
-
-        apply(tracksById)
+        await removeDownloads(videoIds: [videoId])
     }
 
     func deleteAll() async {
+        guard !isMutatingLibrary else { return }
+        isMutatingLibrary = true
+        defer { isMutatingLibrary = false }
+
         cancelAllActiveDownloads()
-
-        // Remove files directly so orphaned downloads are cleaned too.
-        for url in scanDownloadedFiles().values {
-            try? fileManager.removeItem(at: url)
-        }
-        let tracks = await fetchAllFromDatabase()
-        for track in tracks {
-            _ = try? await DatabaseService.shared.delete(track)
-        }
-
         tracksById.removeAll()
         downloads.removeAll()
-        // Keep cancelledDownloadIds so in-flight download(song:) ops still see cancel.
         lastReportedProgress.removeAll()
         apply([:])
+
+        let dirURL = downloadsDir
+        let fm = fileManager
+        await Task.detached(priority: .utility) {
+            let urls = (try? fm.contentsOfDirectory(
+                at: dirURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            for url in urls where url.pathExtension.lowercased() == "m4a" {
+                try? fm.removeItem(at: url)
+            }
+        }.value
+
+        try? await DatabaseService.shared.write { db in
+            try db.execute(sql: "DELETE FROM downloaded_track")
+        }
     }
 
     // MARK: - Local URL Resolution
@@ -821,8 +874,6 @@ extension DownloadManager {
         return url
     }
 
-    /// Uses ffmpeg to remux an existing AAC file with metadata (title/artist/artwork).
-    /// `-c copy` avoids re-encoding — just copies the audio stream and injects metadata atoms.
     private func attachMetadata(
         to fileURL: URL,
         title: String,
@@ -860,7 +911,6 @@ extension DownloadManager {
         try fileManager.moveItem(at: tempOutput, to: fileURL)
     }
 
-    /// Transcodes a non-AAC stream (Opus, etc.) to AAC with metadata using ffmpeg.
     private func processAudio(_ request: TranscodeRequest, videoId: String) async throws {
         let bitrate = Self.transcodeBitrate(for: SettingsStore.shared.downloadQuality)
         let tempOutput = fileManager.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
