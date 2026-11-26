@@ -85,9 +85,9 @@ public struct YouTubeClient: Sendable, Hashable, Codable {
         useWebPoTokens: true
     )
 
-    /// YouTube Music Desktop Web Client context ("WEB_MUSIC").
+    /// YouTube Music Desktop Web Client context.
     public static let webMusic = YouTubeClient(
-        clientName: "WEB_MUSIC",
+        clientName: "WEB_REMIX",
         clientVersion: "1.20260707.12.00",
         clientId: 67,
         userAgent: webUserAgent,
