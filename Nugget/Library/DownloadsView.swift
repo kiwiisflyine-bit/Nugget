@@ -69,7 +69,7 @@ struct DownloadsView: View {
                 }
 
                 if !songs.isEmpty {
-                    songList
+                    songRows
                 }
             }
         }
@@ -109,9 +109,10 @@ struct DownloadsView: View {
         .padding(.bottom, 16)
     }
 
-    private var songList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(songs.enumerated()), id: \.offset) { index, song in
+    @ViewBuilder
+    private var songRows: some View {
+        ForEach(Array(songs.enumerated()), id: \.element.videoId) { index, song in
+            VStack(spacing: 0) {
                 SongRowView(
                     song: song,
                     artSize: 48,
