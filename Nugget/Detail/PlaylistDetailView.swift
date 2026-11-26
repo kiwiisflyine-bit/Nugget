@@ -33,7 +33,7 @@ final class PlaylistDetailViewModel {
     }
 
     /// Fetches every playlist page from InnerTube and parses the response.
-    /// Prependes "VL" to the playlistId if not already present (required by the browse endpoint).
+    /// Prepends "VL" to the playlistId if not already present (required by the browse endpoint).
     func load() async {
         if let route = autoRoute {
             await loadAutoPlaylist(route: route)
@@ -43,7 +43,6 @@ final class PlaylistDetailViewModel {
         isLoading = true
         error = nil
 
-        // Check if this is a local-only playlist
         if let entity = try? await DatabaseService.shared.fetchOne(PlaylistEntity.self, key: playlistId),
            entity.browseId == nil {
             await loadLocalPlaylist(entity: entity)
@@ -55,7 +54,6 @@ final class PlaylistDetailViewModel {
             let (firstPage, rows) = try await SyncBridge.playlistDetail.fetchPlaylistRows(playlistId: playlistId)
             let parsed = Self.parsePlaylistDetail(firstPage: firstPage, rows: rows, playlistId: playlistId)
 
-            // Persist songs to the song table so they become searchable in the library
             let pid = playlistId
             let songs = parsed.songs
             let title = parsed.title
@@ -106,7 +104,6 @@ final class PlaylistDetailViewModel {
 
     private func loadLocalPlaylist(entity: PlaylistEntity) async {
         do {
-            // Fetch songs from playlist_song_map joined with song table
             let songs = try await DatabaseService.shared.fetchAll(
                 SongEntity.self,
                 sql: """
@@ -157,28 +154,7 @@ final class PlaylistDetailViewModel {
                     entities = try await DatabaseService.shared.fetchTopSongs(limit: limit, from: autoTopPeriod.dateFrom, to: Date())
                 }
             }
-            var songs = entities.toSongItems()
-
-            // Resolve missing durations in background
-            let emptyDurationIds = songs.filter { $0.duration <= 0 }.map { $0.videoId }
-            if !emptyDurationIds.isEmpty {
-                await withTaskGroup(of: (String, Int).self) { group in
-                    for videoId in emptyDurationIds {
-                        guard !DurationCache.isPending(videoId) else { continue }
-                        if let cached = DurationCache.get(videoId), cached > 0 { continue }
-                        group.addTask {
-                            let duration = await InnerTubeClient.nuggetShared.resolveDuration(videoId: videoId) ?? 0
-                            return (videoId, duration)
-                        }
-                    }
-                }
-                for i in songs.indices where songs[i].duration <= 0 {
-                    if let cached = DurationCache.get(songs[i].videoId), cached > 0 {
-                        songs[i].duration = cached
-                    }
-                }
-            }
-
+            let songs = entities.toSongItems()
             let totalDuration = songs.reduce(0) { $0 + $1.duration }
 
             playlist = PlaylistDetailInfo(
@@ -204,11 +180,6 @@ final class PlaylistDetailViewModel {
 // MARK: - Parser
 
 extension PlaylistDetailViewModel {
-    /// Parses InnerTube browse JSON into a PlaylistDetailInfo.
-    /// Extracts header metadata (title, author, song count, duration, thumbnail, description)
-    /// from musicDetailHeaderRenderer on the first page, and songs from the
-    /// track rows collected across every continuation page.
-    /// Branch count is inherent to tolerant InnerTube JSON parsing.
     static func parsePlaylistDetail(firstPage json: [String: Any], rows: [[String: Any]], playlistId: String) -> PlaylistDetailInfo {
         var title = "Unknown Playlist"
         var authorName: String?
@@ -248,7 +219,6 @@ extension PlaylistDetailViewModel {
                 .flatMap { $0 as? [String: Any] }
                 .flatMap { InnerTubeJSON.runsText($0) }
 
-            // Author from straplineTextOne
             if let strapline = detailHeader["straplineTextOne"] as? [String: Any],
                let runs = strapline["runs"] as? [[String: Any]],
                let firstRun = runs.first,
@@ -259,7 +229,6 @@ extension PlaylistDetailViewModel {
                     .flatMap { $0["browseId"] as? String }
             }
 
-            // Author from facepile (editable/self-authored playlists)
             if authorName == nil,
                let facepile = detailHeader["facepile"] as? [String: Any],
                let stack = facepile["avatarStackViewModel"] as? [String: Any] {
@@ -287,7 +256,6 @@ extension PlaylistDetailViewModel {
                 }
             }
 
-            // Author from subtitle runs (fallback)
             if authorName == nil,
                let subtitle = detailHeader["subtitle"] as? [String: Any],
                let runs = subtitle["runs"] as? [[String: Any]] {
@@ -305,7 +273,6 @@ extension PlaylistDetailViewModel {
                 }
             }
 
-            // Song count / duration from secondSubtitle
             if let secondSubtitle = detailHeader["secondSubtitle"] as? [String: Any],
                let runs = secondSubtitle["runs"] as? [[String: Any]] {
                 for run in runs {
@@ -337,9 +304,6 @@ extension PlaylistDetailViewModel {
             }
         }
 
-        // --- Songs ---
-        // Rows were collected across every continuation page by the caller;
-        // continuation markers are already stripped.
         for itemDict in rows {
             if let renderer = itemDict["musicResponsiveListItemRenderer"] as? [String: Any],
                let song = SongItem.from(renderer) {
@@ -347,7 +311,6 @@ extension PlaylistDetailViewModel {
             }
         }
 
-        // Use actual song data for total duration (more precise than header)
         if songCount == 0 { songCount = songs.count }
         let songDuration = songs.reduce(0) { $0 + $1.duration }
         if songDuration > 0 {
@@ -414,7 +377,7 @@ struct PlaylistDetailView: View {
         .toolbar {
             if isEditable {
                 ToolbarItem(placement: .primaryAction) {
-                                        Button(action: { showAddSongs = true }, label: {
+                    Button(action: { showAddSongs = true }, label: {
                         Image(systemName: "plus")
                     })
                 }
@@ -456,7 +419,7 @@ struct PlaylistDetailView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-                songList(for: playlist)
+                songRows(for: playlist)
             }
         }
     }
@@ -464,11 +427,10 @@ struct PlaylistDetailView: View {
     @ViewBuilder
     private func header(for playlist: PlaylistDetailInfo) -> some View {
         VStack(spacing: 12) {
-            // Playlist artwork
             if let thumbnailUrl = playlist.thumbnailUrl {
                 HeroArtworkView(url: thumbnailUrl)
             } else {
-                let songArtwork = playlist.songs.compactMap(\.thumbnailUrl)
+                let songArtwork = playlist.songs.prefix(4).compactMap(\.thumbnailUrl)
                 if songArtwork.count >= 4 {
                     ArtworkMosaicView(urls: songArtwork)
                 } else if let firstArtwork = songArtwork.first {
@@ -486,14 +448,12 @@ struct PlaylistDetailView: View {
                 }
             }
 
-            // Playlist title
             Text(playlist.title)
                 .font(.title2)
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
-            // Metadata: song count | duration
             let metaParts = metaStrings(for: playlist)
             if !metaParts.isEmpty {
                 Text(metaParts.joined(separator: " | "))
@@ -501,7 +461,6 @@ struct PlaylistDetailView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            // Author row: avatar + name, clickable → artist detail
             if let authorName = playlist.authorName {
                 Group {
                     if let authorId = playlist.authorBrowseId {
@@ -515,7 +474,6 @@ struct PlaylistDetailView: View {
                 }
             }
 
-            // Description (only if fetched, no fallback)
             if let desc = playlist.descriptionText, !desc.isEmpty {
                 Text(desc)
                     .font(.caption)
@@ -525,7 +483,6 @@ struct PlaylistDetailView: View {
                     .padding(.top, 4)
             }
 
-            // Action buttons: shuffle, play
             PlaybackControlsView(
                 showsMore: true,
                 onPlay: { playAll(playlist) },
@@ -601,10 +558,14 @@ struct PlaylistDetailView: View {
     }
 
     @ViewBuilder
-    private func songList(for playlist: PlaylistDetailInfo) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(playlist.songs.enumerated()), id: \.offset) { index, song in
-                SongRowView(song: song, onTap: { playSong(song, in: playlist) }, onNavigate: { pendingRoute = $0 })
+    private func songRows(for playlist: PlaylistDetailInfo) -> some View {
+        ForEach(Array(playlist.songs.enumerated()), id: \.element.videoId) { index, song in
+            VStack(spacing: 0) {
+                SongRowView(
+                    song: song,
+                    onTap: { playSong(song, in: playlist) },
+                    onNavigate: { pendingRoute = $0 }
+                )
                 .contextMenu {
                     if isEditable {
                         Button(role: .destructive) {
@@ -650,7 +611,6 @@ struct PlaylistDetailView: View {
 
     // MARK: - Helpers
 
-    /// Builds metadata strings like "50 songs • 3:25:10"
     private func metaStrings(for playlist: PlaylistDetailInfo) -> [String] {
         var parts: [String] = []
         if playlist.songCount > 0 { parts.append("\(playlist.songCount) song\(playlist.songCount != 1 ? "s" : "")") }
@@ -748,7 +708,6 @@ struct AddSongToPlaylistView: View {
     private func loadSongs() async {
         defer { isLoading = false }
         do {
-            // Fetch songs that have actual titles
             songs = try await DatabaseService.shared.fetchAll(
                 SongEntity.self,
                 sql: "SELECT * FROM song WHERE title != '' ORDER BY create_date DESC LIMIT 200"
