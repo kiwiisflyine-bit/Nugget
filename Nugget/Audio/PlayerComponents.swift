@@ -60,21 +60,75 @@ struct PlayerPlayPauseButton: View {
     let action: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var symbolScale: CGFloat = 1.0
+    @State private var symbolOpacity: Double = 1.0
+    @State private var displayedPlaying: Bool = NowPlaying.shared.isPlaying
+    @State private var transitionTask: Task<Void, Never>?
+
     var body: some View {
         Button(action: action) {
             ZStack {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: displayedPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 42, weight: .regular))
                     .foregroundStyle(playerInkColor(for: colorScheme))
-                    .id(isPlaying)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .scaleEffect(symbolScale)
+                    .opacity(symbolOpacity)
             }
             .frame(width: 56, height: 56)
-            .animation(.easeInOut(duration: 0.14), value: isPlaying)
         }
         .buttonStyle(.plain)
         .frame(width: 80, height: 80)
         .accessibilityLabel(isPlaying ? "Pause" : "Play")
+        .onAppear {
+            displayedPlaying = isPlaying
+            symbolScale = 1.0
+            symbolOpacity = 1.0
+        }
+        .onChange(of: isPlaying) { _, newValue in
+            runSymbolTransition(to: newValue)
+        }
+        .onDisappear {
+            transitionTask?.cancel()
+            transitionTask = nil
+        }
+    }
+
+    private func runSymbolTransition(to newPlaying: Bool) {
+        transitionTask?.cancel()
+
+        transitionTask = Task { @MainActor in
+            // 1. Shrink out softly toward 70%
+            let outDuration: TimeInterval = 0.09
+            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: outDuration)) {
+                symbolScale = 0.70
+                symbolOpacity = 0.0
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(outDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+
+            // 2. Swap icon at 70% without animating the jump
+            var resetTx = Transaction()
+            resetTx.disablesAnimations = true
+            withTransaction(resetTx) {
+                displayedPlaying = newPlaying
+                symbolScale = 0.70
+                symbolOpacity = 1.0
+            }
+
+            // 3. Soft rise to 105%, then bounce cleanly to 100%
+            let riseDuration: TimeInterval = 0.11
+            withAnimation(.timingCurve(0.45, 0.0, 0.8, 0.35, duration: riseDuration)) {
+                symbolScale = 1.05
+            }
+
+            try? await Task.sleep(nanoseconds: UInt64(riseDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.56)) {
+                symbolScale = 1.0
+            }
+        }
     }
 }
 
