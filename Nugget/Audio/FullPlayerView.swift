@@ -30,6 +30,8 @@ struct FullPlayerView: View {
     @State private var showSongMenu = false
     @State private var artworkEntryOffset: CGFloat = 0
     @State private var canvasDominantColors: [Color]?
+    @State private var thumbnailScale: CGFloat = NowPlaying.shared.isPlaying ? 1.0 : 0.75
+    @State private var thumbnailAnimTask: Task<Void, Never>?
 
     private var activeColorScheme: ColorScheme {
         settings.preferredColorScheme ?? environmentColorScheme
@@ -220,6 +222,13 @@ struct FullPlayerView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: collapseOffset)
         .animation(.easeInOut(duration: 0.35), value: showQueue)
         .simultaneousGesture(collapseDrag)
+        .onChange(of: np.isPlaying) { _, playing in
+            animateThumbnail(isPlaying: playing)
+        }
+        .onDisappear {
+            thumbnailAnimTask?.cancel()
+            thumbnailAnimTask = nil
+        }
         .onChange(of: np.videoId) { _, _ in
             np.isVideoMode = false
             showLyrics = false
@@ -247,6 +256,37 @@ struct FullPlayerView: View {
             Color.clear
                 .detailRouteSheet(item: $pendingRoute)
         )
+    }
+
+    private func animateThumbnail(isPlaying: Bool) {
+        thumbnailAnimTask?.cancel()
+
+        if !isPlaying {
+            let targetScale: CGFloat = 0.75
+            let remainingRatio = max(0.15, min(1.0, abs(thumbnailScale - targetScale) / 0.25))
+            let duration = 0.55 * Double(remainingRatio)
+
+            withAnimation(.timingCurve(0.16, 1.0, 0.3, 1.0, duration: duration)) {
+                thumbnailScale = targetScale
+            }
+        } else {
+            thumbnailAnimTask = Task { @MainActor in
+                let peakScale: CGFloat = 1.05
+                let riseRatio = max(0.15, min(1.0, abs(peakScale - thumbnailScale) / 0.30))
+                let riseDuration = 0.28 * Double(riseRatio)
+
+                withAnimation(.timingCurve(0.55, 0.0, 0.85, 0.35, duration: riseDuration)) {
+                    thumbnailScale = peakScale
+                }
+
+                try? await Task.sleep(nanoseconds: UInt64(riseDuration * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.58)) {
+                    thumbnailScale = 1.0
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -466,8 +506,7 @@ struct FullPlayerView: View {
             x: 0,
             y: 12
         )
-        .scaleEffect(np.isPlaying ? 1.0 : 0.75)
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: np.isPlaying)
+        .scaleEffect(thumbnailScale)
         .offset(x: artworkEntryOffset)
         .gesture(artworkSwipe)
         .onTapGesture {
