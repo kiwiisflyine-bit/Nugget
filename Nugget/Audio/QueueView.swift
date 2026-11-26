@@ -11,6 +11,8 @@ struct QueueView<ProgressSlider: View>: View {
     private let np = NowPlaying.shared
     private let player = PlayerController.shared
     @ObservedObject private var likeStore = LikeStore.shared
+    @Environment(SettingsStore.self) private var settings
+    @Environment(\.colorScheme) private var environmentColorScheme
 
     @Binding var showQueue: Bool
     @Binding var isShuffleOn: Bool
@@ -23,8 +25,44 @@ struct QueueView<ProgressSlider: View>: View {
 
     @State private var showSongMenu = false
 
+    private var activeColorScheme: ColorScheme {
+        if isVideoMode { return .dark }
+        return settings.preferredColorScheme ?? environmentColorScheme
+    }
+
+    private var isLightTheme: Bool {
+        !isVideoMode && activeColorScheme == .light
+    }
+
+    private var primaryForeground: Color {
+        isLightTheme ? .black : .white
+    }
+
+    private var secondaryForeground: Color {
+        isLightTheme ? Color.black.opacity(0.65) : Color.white.opacity(0.65)
+    }
+
+    private var mutedForeground: Color {
+        isLightTheme ? Color.black.opacity(0.45) : Color.white.opacity(0.45)
+    }
+
+    private var pillInactiveFill: Color {
+        isLightTheme ? Color.black.opacity(0.07) : Color.white.opacity(0.07)
+    }
+
+    private var pillActiveFill: Color {
+        isLightTheme ? Color.black.opacity(0.15) : Color.white.opacity(0.15)
+    }
+
+    private var currentRowFill: Color {
+        isLightTheme ? Color.black.opacity(0.07) : Color.white.opacity(0.08)
+    }
+
     var body: some View {
         queueContent
+            .foregroundStyle(primaryForeground)
+            .tint(primaryForeground)
+            .environment(\.colorScheme, activeColorScheme)
             .simultaneousGesture(backSwipeGesture)
     }
 
@@ -35,7 +73,7 @@ struct QueueView<ProgressSlider: View>: View {
                 guard value.startLocation.x <= 28,
                       isHorizontal,
                       value.translation.width > 80 else { return }
-                withAnimation(.easeInOut(duration: 0.3)) {
+                withAnimation(.easeInOut(duration: 0.24)) {
                     if isVideoMode {
                         np.isVideoMode = false
                         showQueue = false
@@ -74,7 +112,7 @@ struct QueueView<ProgressSlider: View>: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .environment(\.colorScheme, .dark)
+                .environment(\.colorScheme, activeColorScheme)
                 .scrollIndicators(.hidden)
                 .layoutPriority(1)
                 .onAppear {
@@ -107,7 +145,7 @@ struct QueueView<ProgressSlider: View>: View {
                         onPlayPause: { player.togglePlayPause() },
                         onNext: { np.playNext() }
                     )
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: np.isPlaying)
+                    .animation(.easeInOut(duration: 0.16), value: np.isPlaying)
 
                     SecondaryActionsRow(
                         showQueue: $showQueue,
@@ -133,13 +171,15 @@ struct QueueView<ProgressSlider: View>: View {
             } else {
                 Image(systemName: "music.note")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(mutedForeground)
                     .frame(width: 64, height: 64)
             }
 
             PlayerTitleBlock(
                 title: np.title,
                 artist: np.displayArtist,
+                titleColor: primaryForeground,
+                artistColor: secondaryForeground,
                 badge: np.audioBadge,
                 is256AAC: np.is256AAC
             )
@@ -147,10 +187,13 @@ struct QueueView<ProgressSlider: View>: View {
             Spacer()
 
             if let song = np.queueSongs.indices.contains(np.queueIndex) ? np.queueSongs[np.queueIndex] : nil {
-                PlayerLikeButton(isLiked: likeStore.isLiked(videoId: song.videoId)) {
+                PlayerLikeButton(
+                    isLiked: likeStore.isLiked(videoId: song.videoId),
+                    inactiveColor: primaryForeground
+                ) {
                     Task { await likeStore.toggle(song: song) }
                 }
-                PlayerOptionsButton(color: .white.opacity(0.6)) {
+                PlayerOptionsButton(color: primaryForeground) {
                     showSongMenu = true
                 }
                 .sheet(isPresented: $showSongMenu) {
@@ -165,7 +208,7 @@ struct QueueView<ProgressSlider: View>: View {
         .padding(.bottom, 8)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+            withAnimation(.easeInOut(duration: 0.24)) {
                 showQueue = false
             }
         }
@@ -190,26 +233,29 @@ struct QueueView<ProgressSlider: View>: View {
 
     private func pillButton(isOn: Binding<Bool>, icon: String, action: (() -> Void)? = nil) -> some View {
         Button {
-            isOn.wrappedValue.toggle()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isOn.wrappedValue.toggle()
+            }
             action?()
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(primaryForeground)
                 .frame(maxWidth: .infinity)
                 .frame(height: 34)
                 .background(
                     Capsule()
-                        .fill(isOn.wrappedValue ? .white.opacity(0.15) : .white.opacity(0.07))
+                        .fill(isOn.wrappedValue ? pillActiveFill : pillInactiveFill)
                 )
         }
+        .buttonStyle(.plain)
     }
 
     private var queueListHeaderRow: some View {
         HStack {
             Text("Queue")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(primaryForeground)
                 .textCase(.uppercase)
 
             Spacer()
@@ -223,7 +269,7 @@ struct QueueView<ProgressSlider: View>: View {
             Spacer()
             Text("Queue is empty")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(mutedForeground)
             Spacer()
         }
         .padding(.vertical, 24)
@@ -240,7 +286,10 @@ struct QueueView<ProgressSlider: View>: View {
             QueueSongRow(
                 song: song,
                 isCurrent: isCurrent,
-                isPlayed: index < np.queueIndex
+                isPlayed: index < np.queueIndex,
+                primaryColor: primaryForeground,
+                secondaryColor: secondaryForeground,
+                mutedColor: mutedForeground
             )
         }
         .buttonStyle(.plain)
@@ -249,7 +298,7 @@ struct QueueView<ProgressSlider: View>: View {
             Group {
                 if isCurrent {
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(currentRowFill)
                         .padding(.horizontal, 12)
                 }
             }
@@ -260,7 +309,7 @@ struct QueueView<ProgressSlider: View>: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
-                withAnimation(.spring(response: 0.3)) {
+                withAnimation(.easeInOut(duration: 0.2)) {
                     removeSong(at: index)
                 }
             } label: {
@@ -308,6 +357,9 @@ struct QueueSongRow: View {
     let song: SongItem
     var isCurrent = false
     var isPlayed = false
+    var primaryColor: Color = .white
+    var secondaryColor: Color = Color.white.opacity(0.65)
+    var mutedColor: Color = Color.white.opacity(0.45)
 
     var body: some View {
         HStack(spacing: 12) {
@@ -328,7 +380,7 @@ struct QueueSongRow: View {
                 if !artistStr.isEmpty {
                     Text(artistStr)
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(isPlayed ? 0.35 : 0.6))
+                        .foregroundStyle(isPlayed && !isCurrent ? mutedColor : secondaryColor)
                         .lineLimit(1)
                 }
             }
@@ -337,16 +389,16 @@ struct QueueSongRow: View {
 
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.65))
+                .foregroundStyle(secondaryColor)
                 .padding(.leading, 4)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .animation(.easeInOut(duration: 0.25), value: isCurrent)
+        .animation(.easeInOut(duration: 0.18), value: isCurrent)
     }
 
     private var titleColor: Color {
-        isPlayed && !isCurrent ? Color.white.opacity(0.45) : .white
+        isPlayed && !isCurrent ? mutedColor : primaryColor
     }
 }
