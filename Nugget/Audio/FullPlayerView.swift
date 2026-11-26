@@ -354,7 +354,7 @@ struct FullPlayerView: View {
                 title: np.title,
                 artist: np.displayArtist,
                 spacing: 4,
-                titleFont: .title3.weight(.bold),
+                titleFont: .title3.weight(.semibold),
                 titleHeight: 28,
                 titleColor: primaryForeground,
                 artistColor: secondaryForeground,
