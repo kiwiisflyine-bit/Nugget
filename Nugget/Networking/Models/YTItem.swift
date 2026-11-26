@@ -646,12 +646,25 @@ extension SongItem {
         self.album = nil
         self.albumId = nil
         self.duration = entity.duration
-        self.thumbnailUrl = entity.thumbnailUrl
+        self.thumbnailUrl = Self.upgradedThumbnailUrl(entity.thumbnailUrl, videoId: entity.id)
         self.isExplicit = false
         self.playlistId = nil
         self.likeStatus = nil
         self.audioBadge = entity.audioBadgeText
         self.is256AAC = entity.is256AAC
+    }
+
+    static func upgradedThumbnailUrl(_ rawUrl: String?, videoId: String) -> String? {
+        guard let rawUrl, !rawUrl.isEmpty else {
+            return ArtworkURLs.fallback(for: videoId)
+        }
+        if rawUrl.contains("googleusercontent.com") || rawUrl.contains("ggpht.com") {
+            return ArtworkURLs.artwork(rawUrl, at: ArtworkURLs.cardPx) ?? rawUrl
+        }
+        if rawUrl.contains("i.ytimg.com/vi/") {
+            return ArtworkURLs.sdVariant(rawUrl) ?? rawUrl
+        }
+        return rawUrl
     }
 }
 
@@ -761,7 +774,7 @@ private func flexText(_ flexColumns: [[String: Any]], index: Int) -> String? {
     guard index < flexColumns.count else { return nil }
     let col = flexColumns[index]
     let flexRenderer = (col["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any])
-        ?? (col["musicResponsiveListItemColumnRenderer"] as? [String: Any])
+        ?? (col["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any])
     guard let textDict = flexRenderer?["text"] as? [String: Any],
           let runs = textDict["runs"] as? [[String: Any]],
           let first = runs.first,
@@ -773,7 +786,7 @@ private func flexTextRuns(_ flexColumns: [[String: Any]], index: Int) -> [[Strin
     guard index < flexColumns.count else { return [] }
     let col = flexColumns[index]
     let flexRenderer = (col["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any])
-        ?? (col["musicResponsiveListItemColumnRenderer"] as? [String: Any])
+        ?? (col["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any])
     guard let textDict = flexRenderer?["text"] as? [String: Any],
           let runs = textDict["runs"] as? [[String: Any]] else { return [] }
     return runs
