@@ -104,9 +104,7 @@ struct PlaylistMoreSheet: View {
     }
 
     private func downloadAll() {
-        for song in playlist.songs {
-            Task { await DownloadManager.shared.download(song: song) }
-        }
+        DownloadManager.shared.enqueueDownloads(songs: playlist.songs)
     }
 
     private func share() {
@@ -116,9 +114,9 @@ struct PlaylistMoreSheet: View {
     }
 
     private func deleteAllDownloads() {
-        let dm = DownloadManager.shared
-        for song in playlist.songs {
-            Task { await dm.delete(videoId: song.videoId) }
+        let ids = playlist.songs.map(\.videoId)
+        Task {
+            await DownloadManager.shared.removeDownloads(videoIds: ids)
         }
     }
 }
