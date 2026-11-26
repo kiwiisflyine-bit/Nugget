@@ -15,7 +15,7 @@ struct MoreButton: View {
         Button(action: action, label: {
             Image(systemName: "ellipsis")
                 .rotationEffect(.degrees(90))
-                .font(.system(size: 15, weight: .black))
+                .font(.system(size: 14, weight: .heavy))
                 .foregroundStyle(Color.primary)
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
