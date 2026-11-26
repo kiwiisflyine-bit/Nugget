@@ -9,14 +9,14 @@ import SwiftUI
 
 /// Trailing ⋮ button shared by every song row.
 struct MoreButton: View {
-    @Environment(SettingsStore.self) private var settings
     let action: () -> Void
 
     var body: some View {
         Button(action: action, label: {
-            Text("⋮")
-                .font(.body.weight(.black))
-                .foregroundStyle(settings.accentColor)
+            Image(systemName: "ellipsis")
+                .rotationEffect(.degrees(90))
+                .font(.system(size: 15, weight: .black))
+                .foregroundStyle(Color.primary)
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         })
