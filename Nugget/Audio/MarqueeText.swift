@@ -49,10 +49,8 @@ struct MarqueeText: View {
                     .fixedSize()
                     .background(TextWidthReader())
                     .offset(x: offset)
-                    .animation(isAnimating ? nil : .none, value: offset)
                     .foregroundStyle(textColor)
             }
-            .id(scrollCycleID)
             .frame(width: width, height: geo.size.height, alignment: .leading)
             .clipped()
             .mask(fadeMask(width: width))
