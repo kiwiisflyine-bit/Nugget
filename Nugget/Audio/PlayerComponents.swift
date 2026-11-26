@@ -97,35 +97,50 @@ struct PlayerPlayPauseButton: View {
         transitionTask?.cancel()
 
         transitionTask = Task { @MainActor in
-            // 1. Shrink out softly toward 70%
-            let outDuration: TimeInterval = 0.09
-            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: outDuration)) {
+            // 1. 100% -> 70%
+            let t1: TimeInterval = 0.14
+            withAnimation(.easeInOut(duration: t1)) {
                 symbolScale = 0.70
-                symbolOpacity = 0.0
             }
-
-            try? await Task.sleep(nanoseconds: UInt64(outDuration * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(t1 * 1_000_000_000))
             guard !Task.isCancelled else { return }
 
-            // 2. Swap icon at 70% without animating the jump
-            var resetTx = Transaction()
-            resetTx.disablesAnimations = true
-            withTransaction(resetTx) {
+            // 2. Super-fast zip from 70% -> 0%
+            let t2: TimeInterval = 0.05
+            withAnimation(.easeIn(duration: t2)) {
+                symbolScale = 0.001
+                symbolOpacity = 0.0
+            }
+            try? await Task.sleep(nanoseconds: UInt64(t2 * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+
+            // Swap symbol at 0%
+            var swapTx = Transaction()
+            swapTx.disablesAnimations = true
+            withTransaction(swapTx) {
                 displayedPlaying = newPlaying
-                symbolScale = 0.70
+                symbolScale = 0.001
                 symbolOpacity = 1.0
             }
 
-            // 3. Soft rise to 105%, then bounce cleanly to 100%
-            let riseDuration: TimeInterval = 0.11
-            withAnimation(.timingCurve(0.45, 0.0, 0.8, 0.35, duration: riseDuration)) {
-                symbolScale = 1.05
+            // 3. Super-fast zip from 0% -> 70%
+            let t3: TimeInterval = 0.05
+            withAnimation(.easeOut(duration: t3)) {
+                symbolScale = 0.70
             }
-
-            try? await Task.sleep(nanoseconds: UInt64(riseDuration * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(t3 * 1_000_000_000))
             guard !Task.isCancelled else { return }
 
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.56)) {
+            // 4. 70% -> 105%
+            let t4: TimeInterval = 0.15
+            withAnimation(.easeInOut(duration: t4)) {
+                symbolScale = 1.05
+            }
+            try? await Task.sleep(nanoseconds: UInt64(t4 * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+
+            // 5. Bounce from 105% -> 100%
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.52)) {
                 symbolScale = 1.0
             }
         }
