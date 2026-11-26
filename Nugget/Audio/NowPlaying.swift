@@ -100,7 +100,10 @@ final class NowPlaying {
     }
 
     deinit {
-        timer?.invalidate()
+        MainActor.assumeIsolated {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 
     // MARK: - Persistent queue
