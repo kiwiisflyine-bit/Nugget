@@ -47,6 +47,13 @@ struct SongRowView: View {
         song.is256AAC ?? (downloadManager.track(for: song.videoId)?.is256AAC ?? false)
     }
 
+    private var isActivelyDownloading: Bool {
+        if case .downloading = downloadManager.downloads[song.videoId] {
+            return true
+        }
+        return false
+    }
+
     var body: some View {
         HStack(spacing: DesignTokens.rowSpacing) {
             AsyncImageView(url: song.thumbnailUrl)
@@ -86,7 +93,11 @@ struct SongRowView: View {
                 )
             }
         }
-        .background(DownloadCellProgressView(song: song))
+        .background {
+            if isActivelyDownloading {
+                DownloadCellProgressView(videoId: song.videoId)
+            }
+        }
         .padding(.horizontal, DesignTokens.screenHPadding)
         .padding(.vertical, DesignTokens.rowVPadding)
         .contentShape(Rectangle())
@@ -98,14 +109,14 @@ struct SongRowView: View {
     }
 }
 
-/// Full-cell progress background shown while a song is downloading.
+/// Full-cell progress background shown while a song is actively downloading.
 struct DownloadCellProgressView: View {
-    let song: SongItem
+    let videoId: String
     @ObservedObject private var downloadManager = DownloadManager.shared
 
     var body: some View {
-        let state = downloadManager.state(for: song.videoId)
-        return GeometryReader { geo in
+        let state = downloadManager.downloads[videoId] ?? .notStarted
+        GeometryReader { geo in
             if case .downloading(let fraction) = state {
                 Color.accentColor.opacity(0.25)
                     .frame(
@@ -115,6 +126,6 @@ struct DownloadCellProgressView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: state)
+        .animation(.easeInOut(duration: 0.25), value: state)
     }
 }
