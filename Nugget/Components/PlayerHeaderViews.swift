@@ -19,6 +19,7 @@ struct PlayerTitleBlock: View {
     var artistColor: Color? = nil
     var badge: String? = nil
     var is256AAC: Bool = false
+    var resetKey: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
@@ -29,6 +30,7 @@ struct PlayerTitleBlock: View {
                     frameHeight: titleHeight,
                     textColor: titleColor
                 )
+                .id("\(resetKey)|\(title)")
 
                 if let badge, !badge.isEmpty {
                     AudioQualityBadge(badge: badge, is256AAC: is256AAC, isPlayerSurface: true)
