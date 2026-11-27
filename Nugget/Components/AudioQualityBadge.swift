@@ -85,10 +85,18 @@ struct AudioQualityBadge: View {
     var isPlayerSurface: Bool = false
     var isDownloaded: Bool = false
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var effectiveColorScheme: ColorScheme {
+        settings.preferredColorScheme ?? colorScheme
+    }
 
     private var fillColor: Color {
         if is256AAC {
             return settings.accentColor
+        }
+        if effectiveColorScheme == .light {
+            return Color(.systemGray4)
         }
         return isPlayerSurface ? Color.white.opacity(0.18) : Color(.systemGray5)
     }
@@ -96,6 +104,9 @@ struct AudioQualityBadge: View {
     private var foregroundColor: Color {
         if is256AAC {
             return Color.white
+        }
+        if effectiveColorScheme == .light {
+            return Color.black
         }
         return isPlayerSurface ? Color.white.opacity(0.85) : Color.secondary
     }
