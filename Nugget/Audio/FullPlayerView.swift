@@ -16,6 +16,7 @@ struct FullPlayerView: View {
     @ObservedObject private var downloadManager = DownloadManager.shared
     private let player = PlayerController.shared
     @Bindable private var np = NowPlaying.shared
+    @AppStorage("fullPlayer.audioBadgeHidden") private var isAudioBadgeHiddenByUser = false
     @State private var editingProgress: Float = 0
     @State private var isEditingSlider = false
     @State private var collapseOffset: CGFloat = 0
@@ -27,7 +28,6 @@ struct FullPlayerView: View {
     }
     @State private var showLyrics = false
     @State private var showQueue = false
-    @State private var isAudioBadgeHiddenByUser = false
     @State private var pendingRoute: DetailRoute?
     @State private var showSongMenu = false
     @State private var artworkEntryOffset: CGFloat = 0
@@ -247,7 +247,6 @@ struct FullPlayerView: View {
             np.isVideoMode = false
             showLyrics = false
             showQueue = false
-            isAudioBadgeHiddenByUser = false
             preloadLyrics()
         }
         .onChange(of: np.queueSongs.count) { _, _ in
