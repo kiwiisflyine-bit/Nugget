@@ -494,7 +494,7 @@ struct FullPlayerView: View {
             y: 12
         )
         .scaleEffect(np.isPlaying ? 1.0 : 0.78)
-        .animation(.easeInOut(duration: 0.24), value: np.isPlaying)
+        .animation(.easeInOut(duration: 0.14), value: np.isPlaying)
         .offset(x: artworkEntryOffset)
         .gesture(artworkSwipe)
         .onTapGesture {
