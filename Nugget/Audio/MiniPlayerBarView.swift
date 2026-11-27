@@ -139,6 +139,7 @@ struct MiniPlayerBarView: View {
     private func page(for song: SongItem, width: CGFloat) -> some View {
         let isActive = song.videoId == np.videoId
         let displayTitle = isActive && !np.title.isEmpty ? np.title : song.title
+        let marqueeIdentity = "\(song.videoId)-\(np.queueIndex)-\(displayTitle)"
         return HStack(spacing: 8) {
             barArtwork(for: song.videoId)
 
@@ -156,6 +157,7 @@ struct MiniPlayerBarView: View {
                         frameHeight: 16,
                         textColor: titleColor
                     )
+                    .id(marqueeIdentity)
                 }
 
                 Text(artistLine(for: song))
@@ -244,9 +246,6 @@ struct MiniPlayerBarView: View {
         return np.queueSongs[prevIdx]
     }
 
-    /// Artist line for a queued song, falling back to the resolved author
-    /// (what the big player shows via `displayArtist`) when the queued item
-    /// carries no artist runs — e.g. videos or cache-repaired songs.
     private func artistLine(for song: SongItem) -> String {
         let own = artistDisplayString(from: song.artists)
         if !own.isEmpty { return own }
