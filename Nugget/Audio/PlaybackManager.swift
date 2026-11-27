@@ -179,36 +179,39 @@ actor PlaybackManager {
         }
     }
 
-    func resolveVideoStream(videoId: String) async throws -> String {
+    private func resolveVideoOutcome(videoId: String, using client: InnerTubeClient) async throws -> StreamFallback.VideoResolution {
         var request = StreamResolveRequest(videoId: videoId)
         request.options.audioQuality = SettingsStore.shared.audioQuality
         await InnerTubeClient.updateStreamAuth()
 
-        let resolved
         if request.options.audioQuality == .aac256 {
             request.chain = ClientFallbackChain.aac256Chain
             do {
-                resolved = try await StreamFallback.resolveVideo(
+                return try await StreamFallback.resolveVideo(
                     request,
-                    using: InnerTubeClient.streamShared,
+                    using: client,
                     providers: .nuggetLive
                 )
             } catch {
                 request.chain = ClientFallbackChain.preferred
-                resolved = try await StreamFallback.resolveVideo(
+                return try await StreamFallback.resolveVideo(
                     request,
-                    using: InnerTubeClient.streamShared,
+                    using: client,
                     providers: .nuggetLive
                 )
             }
         } else {
             request.chain = ClientFallbackChain.preferred
-            resolved = try await StreamFallback.resolveVideo(
+            return try await StreamFallback.resolveVideo(
                 request,
-                using: InnerTubeClient.streamShared,
+                using: client,
                 providers: .nuggetLive
             )
         }
+    }
+
+    func resolveVideoStream(videoId: String) async throws -> String {
+        let resolved = try await resolveVideoOutcome(videoId: videoId, using: InnerTubeClient.streamShared)
 
         switch resolved {
         case .muxed(let url):
@@ -233,35 +236,7 @@ actor PlaybackManager {
     }
 
     func resolveVideoOnlyURL(videoId: String) async throws -> String {
-        var request = StreamResolveRequest(videoId: videoId)
-        request.options.audioQuality = SettingsStore.shared.audioQuality
-        await InnerTubeClient.updateStreamAuth()
-
-        let resolved
-        if request.options.audioQuality == .aac256 {
-            request.chain = ClientFallbackChain.aac256Chain
-            do {
-                resolved = try await StreamFallback.resolveVideo(
-                    request,
-                    using: InnerTubeClient.nuggetShared,
-                    providers: .nuggetLive
-                )
-            } catch {
-                request.chain = ClientFallbackChain.preferred
-                resolved = try await StreamFallback.resolveVideo(
-                    request,
-                    using: InnerTubeClient.nuggetShared,
-                    providers: .nuggetLive
-                )
-            }
-        } else {
-            request.chain = ClientFallbackChain.preferred
-            resolved = try await StreamFallback.resolveVideo(
-                request,
-                using: InnerTubeClient.nuggetShared,
-                providers: .nuggetLive
-            )
-        }
+        let resolved = try await resolveVideoOutcome(videoId: videoId, using: InnerTubeClient.nuggetShared)
 
         switch resolved {
         case .muxed(let url):
