@@ -174,12 +174,8 @@ public enum StreamResolver: Sendable {
                 "video formats: \(allFormats.filter { $0.width != nil }.count))"
         )
 
-        let candidates: [Format]
-        if let preferred = options.preferredFormat,
-           let fresh = allFormats.first(where: { $0.itag == preferred.itag }) {
-            candidates = [fresh]
-            SwiftyTubeLog.debug("Using preferred format itag=\(preferred.itag ?? 0)")
-        } else if options.forDownload {
+        var candidates: [Format]
+        if options.forDownload {
             if let downloadFormat = FormatSelector.bestDownloadFormat(
                 from: allFormats,
                 downloadQuality: options.downloadQuality
@@ -193,6 +189,13 @@ public enum StreamResolver: Sendable {
                 from: allFormats,
                 preference: options.audioQuality
             )
+        }
+
+        if let preferred = options.preferredFormat,
+           let fresh = allFormats.first(where: { $0.itag == preferred.itag }) {
+            candidates.removeAll { $0.itag == fresh.itag }
+            candidates.insert(fresh, at: 0)
+            SwiftyTubeLog.debug("Prioritizing preferred format itag=\(preferred.itag ?? 0)")
         }
 
         var chosenFormat: Format?
