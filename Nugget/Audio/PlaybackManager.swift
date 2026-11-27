@@ -193,6 +193,7 @@ actor PlaybackManager {
                     providers: .nuggetLive
                 )
             } catch {
+                Log.playbackManager.notice("256AAC video chain failed for \(videoId) (\(error.localizedDescription)); falling back to preferred chain")
                 request.chain = ClientFallbackChain.preferred
                 return try await StreamFallback.resolveVideo(
                     request,
@@ -288,7 +289,7 @@ actor PlaybackManager {
                     providers: .nuggetLive
                 )
             } catch {
-                Log.playbackManager.notice("256AAC chain had no stream for \(videoId); falling back to standard chain")
+                Log.playbackManager.notice("256AAC chain had no stream for \(videoId) (\(error.localizedDescription)); falling back to standard chain")
                 request.chain = forDownload ? ClientFallbackChain.forDownload : ClientFallbackChain.preferred
                 return try await StreamFallback.resolveFirstValid(
                     request,
