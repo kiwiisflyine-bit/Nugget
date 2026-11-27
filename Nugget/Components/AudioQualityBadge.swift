@@ -76,27 +76,54 @@ public enum AudioQualityBadgeHelper {
     }
 }
 
-/// Compact rounded-corner pill badge displaying audio codec and bitrate.
-/// Uses the app's defined theme accent color with contrasting text for 256kbps AAC (itag 141),
-/// and a subtle grey shaded background for normal/standard audio qualities.
+/// Sharp-cornered badge displaying either a compact download symbol for downloaded tracks
+/// or the audio codec/bitrate label.
+/// Uses the theme accent color for premium/256kbps AAC quality and non-accented fill for standard/lower quality.
 struct AudioQualityBadge: View {
     let badge: String
     let is256AAC: Bool
     var isPlayerSurface: Bool = false
+    var isDownloaded: Bool = false
     @Environment(SettingsStore.self) private var settings
 
+    private var fillColor: Color {
+        if is256AAC {
+            return settings.accentColor
+        }
+        return isPlayerSurface ? Color.white.opacity(0.18) : Color(.systemGray5)
+    }
+
+    private var foregroundColor: Color {
+        if is256AAC {
+            return Color.white
+        }
+        return isPlayerSurface ? Color.white.opacity(0.85) : Color.secondary
+    }
+
     var body: some View {
-        Text(badge)
-            .font(.system(size: 9.5, weight: .bold, design: .rounded))
-            .textCase(.uppercase)
-            .lineLimit(1)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .foregroundStyle(is256AAC ? Color.white : (isPlayerSurface ? Color.white.opacity(0.85) : Color.secondary))
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(is256AAC ? settings.accentColor : (isPlayerSurface ? Color.white.opacity(0.18) : Color(.systemGray5)))
-            )
-            .fixedSize()
+        if isDownloaded {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(foregroundColor)
+                .frame(width: 15, height: 15)
+                .background(
+                    Rectangle()
+                        .fill(fillColor)
+                )
+                .fixedSize()
+        } else {
+            Text(badge)
+                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                .textCase(.uppercase)
+                .lineLimit(1)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .foregroundStyle(foregroundColor)
+                .background(
+                    Rectangle()
+                        .fill(fillColor)
+                )
+                .fixedSize()
+        }
     }
 }
