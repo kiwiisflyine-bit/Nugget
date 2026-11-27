@@ -179,7 +179,7 @@ actor PlaybackManager {
         }
     }
 
-    private func resolveVideoOutcome(videoId: String, using client: InnerTubeClient) async throws -> StreamFallback.VideoResolution {
+    private func resolveVideoOutcome(videoId: String, using client: InnerTubeClient) async throws -> VideoStream {
         var request = StreamResolveRequest(videoId: videoId)
         request.options.audioQuality = SettingsStore.shared.audioQuality
         await InnerTubeClient.updateStreamAuth()
