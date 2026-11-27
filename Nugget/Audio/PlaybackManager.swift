@@ -184,7 +184,7 @@ actor PlaybackManager {
         request.options.audioQuality = SettingsStore.shared.audioQuality
         await InnerTubeClient.updateStreamAuth()
 
-        let resolved: VideoStreamResult
+        let resolved
         if request.options.audioQuality == .aac256 {
             request.chain = ClientFallbackChain.aac256Chain
             do {
@@ -237,7 +237,7 @@ actor PlaybackManager {
         request.options.audioQuality = SettingsStore.shared.audioQuality
         await InnerTubeClient.updateStreamAuth()
 
-        let resolved: VideoStreamResult
+        let resolved
         if request.options.audioQuality == .aac256 {
             request.chain = ClientFallbackChain.aac256Chain
             do {
