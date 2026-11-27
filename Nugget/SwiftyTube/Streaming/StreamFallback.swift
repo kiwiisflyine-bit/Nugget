@@ -111,6 +111,15 @@ public enum VideoStream: Sendable {
 
 /// Shared fallback loops (player wiring stays in apps).
 public enum StreamFallback: Sendable {
+    private static func is256AACResult(_ result: PlaybackResult) -> Bool {
+        result.itag == 141
+            || AudioQualityBadgeHelper.is256AAC(
+                itag: result.itag,
+                mimeType: result.mimeType,
+                bitrate: result.bitrate
+            )
+    }
+
     /// First valid stream across the chain. PoTokens minted lazily.
     public static func resolveFirstValid(
         _ request: StreamResolveRequest,
@@ -136,8 +145,11 @@ public enum StreamFallback: Sendable {
             return (resolved?.playerRequestPoToken, resolved?.streamingDataPoToken)
         }
 
+        let seek256AAC = !request.options.forDownload && request.options.audioQuality == .aac256
+
         var lastError: Error?
         var nonAACFallback: PlaybackResult?
+        var non256Fallback: PlaybackResult?
 
         for entry in request.chain {
             var options = request.options
@@ -183,7 +195,17 @@ public enum StreamFallback: Sendable {
                         }
                         continue
                     }
-                } else if request.policy.storeInCache {
+                } else if seek256AAC && !is256AACResult(result) {
+                    SwiftyTubeLog.debug(
+                        "\(result.clientName) returned itag=\(result.itag) instead of 256AAC; keeping as fallback and continuing"
+                    )
+                    if non256Fallback == nil {
+                        non256Fallback = result
+                    }
+                    continue
+                }
+
+                if request.policy.storeInCache {
                     await cache.set(videoId: request.videoId, result: result)
                 }
                 return result
@@ -195,6 +217,14 @@ public enum StreamFallback: Sendable {
 
         if request.policy.preferAAC, let fallback = nonAACFallback {
             SwiftyTubeLog.debug("No AAC stream found - falling back to \(fallback.mimeType)")
+            return fallback
+        }
+
+        if seek256AAC, let fallback = non256Fallback {
+            SwiftyTubeLog.debug("No 256AAC stream found - falling back to itag=\(fallback.itag) (\(fallback.mimeType))")
+            if request.policy.storeInCache {
+                await cache.set(videoId: request.videoId, result: fallback)
+            }
             return fallback
         }
 
