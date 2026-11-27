@@ -40,12 +40,13 @@ public enum ClientFallbackChain: Sendable {
         ]
     }
 
-    /// Fallback chain trying direct clients first, then validated WEB_MUSIC / WEB_REMIX
-    /// for 256AAC streams, and WEB last.
+    /// Prioritizes validated WEB_MUSIC and WEB_REMIX for 256AAC streams first,
+    /// then falls back to direct clients and WEB for standard/non-music streams.
     public static var aac256Chain: [FallbackClient] {
-        direct + [
+        [
             FallbackClient(client: .webMusic, skipValidation: false),
-            FallbackClient(client: .webRemix, skipValidation: false),
+            FallbackClient(client: .webRemix, skipValidation: false)
+        ] + direct + [
             FallbackClient(client: .web, skipValidation: true)
         ]
     }
