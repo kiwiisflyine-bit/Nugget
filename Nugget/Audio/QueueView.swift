@@ -11,6 +11,7 @@ struct QueueView<ProgressSlider: View>: View {
     private let np = NowPlaying.shared
     private let player = PlayerController.shared
     @ObservedObject private var likeStore = LikeStore.shared
+    @ObservedObject private var downloadManager = DownloadManager.shared
     @Environment(SettingsStore.self) private var settings
     @Environment(\.colorScheme) private var environmentColorScheme
 
@@ -24,6 +25,30 @@ struct QueueView<ProgressSlider: View>: View {
     var isVideoMode: Bool = false
 
     @State private var showSongMenu = false
+
+    private var headerTrackDownload: DownloadedTrackEntity? {
+        guard let videoId = np.videoId else { return nil }
+        return downloadManager.track(for: videoId)
+    }
+
+    private var isHeaderSongDownloaded: Bool {
+        guard let videoId = np.videoId else { return false }
+        return downloadManager.isDownloaded(videoId: videoId)
+    }
+
+    private var headerBadgeText: String? {
+        if let track = headerTrackDownload, let badge = track.audioBadgeText {
+            return badge
+        }
+        return np.audioBadge ?? (isHeaderSongDownloaded ? "DL" : nil)
+    }
+
+    private var headerIs256AAC: Bool {
+        if let track = headerTrackDownload {
+            return track.is256AAC
+        }
+        return np.is256AAC
+    }
 
     private var activeColorScheme: ColorScheme {
         if isVideoMode { return .dark }
@@ -180,8 +205,9 @@ struct QueueView<ProgressSlider: View>: View {
                 artist: np.displayArtist,
                 titleColor: primaryForeground,
                 artistColor: secondaryForeground,
-                badge: np.audioBadge,
-                is256AAC: np.is256AAC
+                badge: headerBadgeText,
+                is256AAC: headerIs256AAC,
+                isDownloaded: isHeaderSongDownloaded
             )
 
             Spacer()
