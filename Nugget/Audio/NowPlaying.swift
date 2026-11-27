@@ -212,8 +212,8 @@ final class NowPlaying {
     func repeatCurrent() {
         repairQueueIndex()
         guard queueSongs.indices.contains(queueIndex) else { return }
-        playCurrentSong(logContext: "repeatCurrent") { [weak self] in
-            self?.isRepeatOn = false
+        playCurrentSong(logContext: "repeatCurrent") {
+            self.isRepeatOn = false
         }
     }
 
@@ -389,27 +389,26 @@ final class NowPlaying {
     }
 
     private func autoplaySimilar(from videoId: String) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        Task {
             do {
                 let radio = try await PersonalizationService.shared.fetchRadio(videoId: videoId)
                 let songs = radio.songs
                 guard !songs.isEmpty else {
-                    self.isPlaying = false
+                    isPlaying = false
                     return
                 }
                 self.queueSongs = songs
                 self.queueIndex = 0
                 self.isShuffleOn = false
                 let first = songs[0]
-                self.update(with: first)
+                update(with: first)
                 try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId)
                 self.persistQueueState()
             } catch {
                 Log.nowPlaying.error("Autoplay similar failed: \(error)")
                 PlayerController.shared.stop()
-                self.isPlaying = false
-                self.currentTime = 0
+                isPlaying = false
+                currentTime = 0
             }
         }
     }
@@ -446,18 +445,18 @@ final class NowPlaying {
         isPlaying = false
         currentTime = 0
         Log.nowPlaying.notice("Stream failed mid-play, re-resolving \(videoId)")
-        Task { @MainActor [weak self] in
+        Task {
             await PlayerConfigStore.shared.notifyStreamRejection()
             await StreamCache.shared.remove(videoId: videoId)
             do {
                 try await PlaybackManager.shared.resolveAndPlay(videoId: videoId)
-                self?.recentFailures.removeValue(forKey: videoId)
+                _ = await MainActor.run { self.recentFailures.removeValue(forKey: videoId) }
             } catch {
                 Log.nowPlaying.error("Mid-play recovery failed: \(error)")
                 PlayerController.shared.stop()
-                if let owner = self, owner.videoId == videoId {
-                    owner.isPlaying = false
-                    owner.currentTime = 0
+                if self.videoId == videoId {
+                    isPlaying = false
+                    currentTime = 0
                 }
             }
         }
@@ -477,13 +476,12 @@ final class NowPlaying {
             thumb = queueSongs.first { $0.videoId == videoId }?.thumbnailUrl
         }
 
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        Task {
             if let localURL = await DownloadManager.shared.localURL(for: videoId) {
-                self.loadArtworkFromLocalFile(localURL, videoId: videoId)
+                loadArtworkFromLocalFile(localURL, videoId: videoId)
                 return
             }
-            self.loadThumbnailFromCDN(videoId: videoId, thumbnailUrl: thumb)
+            loadThumbnailFromCDN(videoId: videoId, thumbnailUrl: thumb)
         }
     }
 
@@ -502,12 +500,12 @@ final class NowPlaying {
                 }
             }
 
-            await MainActor.run { [weak self] in
-                guard let self, self.lastLoadedVideoId == videoId else { return }
+            await MainActor.run {
+                guard lastLoadedVideoId == videoId else { return }
                 if let artworkImage {
-                    self.publishArtwork(artworkImage)
+                    publishArtwork(artworkImage)
                 } else {
-                    self.loadThumbnailFromCDN(videoId: videoId)
+                    loadThumbnailFromCDN(videoId: videoId)
                 }
             }
         }
@@ -599,16 +597,17 @@ final class NowPlaying {
         if paintedIndex == nil {
             thumbnailImage = nil
         }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        Task {
             var fallbackTinyImage: UIImage?
             for url in urls.prefix(fetchCount) {
-                guard self.lastLoadedVideoId == videoId else { return }
+                guard lastLoadedVideoId == videoId else { return }
                 do {
                     let platformImage = try await ArtworkLoader.image(for: url)
                     if Self.isSharpEnough(platformImage) {
-                        guard self.lastLoadedVideoId == videoId else { return }
-                        self.publishArtwork(platformImage)
+                        await MainActor.run {
+                            guard self.lastLoadedVideoId == videoId else { return }
+                            self.publishArtwork(platformImage)
+                        }
                         return
                     } else if fallbackTinyImage == nil {
                         fallbackTinyImage = platformImage
@@ -619,16 +618,20 @@ final class NowPlaying {
             }
 
             if let fallbackTinyImage {
-                guard self.lastLoadedVideoId == videoId else { return }
-                self.publishArtwork(fallbackTinyImage)
+                await MainActor.run {
+                    guard self.lastLoadedVideoId == videoId else { return }
+                    self.publishArtwork(fallbackTinyImage)
+                }
                 return
             }
 
             if paintedIndex == nil {
-                guard self.lastLoadedVideoId == videoId else { return }
-                self.thumbnailImage = Image(systemName: "music.note")
-                self.thumbnailVersion &+= 1
-                self.updateDominantColors(from: nil)
+                await MainActor.run {
+                    guard self.lastLoadedVideoId == videoId else { return }
+                    thumbnailImage = Image(systemName: "music.note")
+                    thumbnailVersion &+= 1
+                    updateDominantColors(from: nil)
+                }
             }
         }
     }
