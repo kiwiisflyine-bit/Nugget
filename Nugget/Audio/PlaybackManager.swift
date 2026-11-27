@@ -163,18 +163,12 @@ actor PlaybackManager {
         inflightResolutions.removeValue(forKey: key)
     }
 
-    /// Queue song for resolve-time metadata (artists, artwork, video type).
-    /// One MainActor hop instead of one per field, so the snapshot is
-    /// consistent even if the queue changes mid-resolve.
     private func queueSong(for videoId: String) async -> SongItem? {
         await MainActor.run {
             NowPlaying.shared.queueSongs.first { $0.videoId == videoId }
         }
     }
 
-    /// Publishes video availability for a resolve result. The row type wins
-    /// (resolve responses often omit it); unknown rows fall back to an
-    /// authoritative lookup inside the shared availability check.
     private func publishVideoAvailability(result: PlaybackResult, videoId: String, rowType: String?) async {
         let type = result.musicVideoType ?? rowType
         let hasVideo = await VideoAvailability.shared.hasVideo(
@@ -185,21 +179,38 @@ actor PlaybackManager {
         }
     }
 
-    /// Resolves a playable video stream URL for video mode. Prefers a muxed
-    /// (audio+video) stream; when the video offers none, falls back to an EDL
-    /// that combines a DASH video-only stream with a separate audio stream.
     func resolveVideoStream(videoId: String) async throws -> String {
         var request = StreamResolveRequest(videoId: videoId)
         request.options.audioQuality = SettingsStore.shared.audioQuality
-        request.chain = (request.options.audioQuality == .aac256)
-            ? ClientFallbackChain.aac256Chain
-            : ClientFallbackChain.preferred
         await InnerTubeClient.updateStreamAuth()
-        switch try await StreamFallback.resolveVideo(
-            request,
-            using: InnerTubeClient.streamShared,
-            providers: .nuggetLive
-        ) {
+
+        let resolved: VideoStreamResult
+        if request.options.audioQuality == .aac256 {
+            request.chain = ClientFallbackChain.aac256Chain
+            do {
+                resolved = try await StreamFallback.resolveVideo(
+                    request,
+                    using: InnerTubeClient.streamShared,
+                    providers: .nuggetLive
+                )
+            } catch {
+                request.chain = ClientFallbackChain.preferred
+                resolved = try await StreamFallback.resolveVideo(
+                    request,
+                    using: InnerTubeClient.streamShared,
+                    providers: .nuggetLive
+                )
+            }
+        } else {
+            request.chain = ClientFallbackChain.preferred
+            resolved = try await StreamFallback.resolveVideo(
+                request,
+                using: InnerTubeClient.streamShared,
+                providers: .nuggetLive
+            )
+        }
+
+        switch resolved {
         case .muxed(let url):
             return url
         case .split(let videoURL, let audioURL, let duration):
@@ -213,7 +224,6 @@ actor PlaybackManager {
         }
     }
 
-    /// Returns the muxed/video stream URL for video mode, preferring the cached one.
     func resolveMuxedURL(videoId: String) async throws -> String {
         if let cached = await StreamCache.shared.get(videoId: videoId),
            let muxed = cached.muxedStreamUrl {
@@ -225,15 +235,35 @@ actor PlaybackManager {
     func resolveVideoOnlyURL(videoId: String) async throws -> String {
         var request = StreamResolveRequest(videoId: videoId)
         request.options.audioQuality = SettingsStore.shared.audioQuality
-        request.chain = (request.options.audioQuality == .aac256)
-            ? ClientFallbackChain.aac256Chain
-            : ClientFallbackChain.preferred
         await InnerTubeClient.updateStreamAuth()
-        switch try await StreamFallback.resolveVideo(
-            request,
-            using: InnerTubeClient.nuggetShared,
-            providers: .nuggetLive
-        ) {
+
+        let resolved: VideoStreamResult
+        if request.options.audioQuality == .aac256 {
+            request.chain = ClientFallbackChain.aac256Chain
+            do {
+                resolved = try await StreamFallback.resolveVideo(
+                    request,
+                    using: InnerTubeClient.nuggetShared,
+                    providers: .nuggetLive
+                )
+            } catch {
+                request.chain = ClientFallbackChain.preferred
+                resolved = try await StreamFallback.resolveVideo(
+                    request,
+                    using: InnerTubeClient.nuggetShared,
+                    providers: .nuggetLive
+                )
+            }
+        } else {
+            request.chain = ClientFallbackChain.preferred
+            resolved = try await StreamFallback.resolveVideo(
+                request,
+                using: InnerTubeClient.nuggetShared,
+                providers: .nuggetLive
+            )
+        }
+
+        switch resolved {
         case .muxed(let url):
             return url
         case .split(let videoURL, _, _):
@@ -245,7 +275,7 @@ actor PlaybackManager {
 
     /// Stable per-launch session id for PoToken minting.
     static let sessionId: String = UUID().uuidString
-    /// Resolve a video without playing. Useful for previews / testing.
+
     func resolve(videoId: String, preferredFormat: Format? = nil, forDownload: Bool = false) async throws -> PlaybackResult {
         if !forDownload, let cached = await StreamCache.shared.get(videoId: videoId) {
             return cached
@@ -269,16 +299,35 @@ actor PlaybackManager {
         request.options.preferredFormat = preferredFormat
         request.options.audioQuality = SettingsStore.shared.audioQuality
         request.options.downloadQuality = SettingsStore.shared.downloadQuality
-        if (forDownload && request.options.downloadQuality == .aac256) || (!forDownload && request.options.audioQuality == .aac256) {
+        await InnerTubeClient.updateStreamAuth()
+
+        let wants256AAC = (forDownload && request.options.downloadQuality == .aac256)
+            || (!forDownload && request.options.audioQuality == .aac256)
+
+        if wants256AAC {
             request.chain = ClientFallbackChain.aac256Chain
+            do {
+                return try await StreamFallback.resolveFirstValid(
+                    request,
+                    using: InnerTubeClient.streamShared,
+                    providers: .nuggetLive
+                )
+            } catch {
+                Log.playbackManager.notice("256AAC chain had no stream for \(videoId); falling back to standard chain")
+                request.chain = forDownload ? ClientFallbackChain.forDownload : ClientFallbackChain.preferred
+                return try await StreamFallback.resolveFirstValid(
+                    request,
+                    using: InnerTubeClient.streamShared,
+                    providers: .nuggetLive
+                )
+            }
         } else {
             request.chain = forDownload ? ClientFallbackChain.forDownload : ClientFallbackChain.preferred
+            return try await StreamFallback.resolveFirstValid(
+                request,
+                using: InnerTubeClient.streamShared,
+                providers: .nuggetLive
+            )
         }
-        await InnerTubeClient.updateStreamAuth()
-        return try await StreamFallback.resolveFirstValid(
-            request,
-            using: InnerTubeClient.streamShared,
-            providers: .nuggetLive
-        )
     }
 }
