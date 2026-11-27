@@ -13,6 +13,7 @@ struct FullPlayerView: View {
 
     @Environment(SettingsStore.self) private var settings
     @Environment(\.colorScheme) private var environmentColorScheme
+    @ObservedObject private var downloadManager = DownloadManager.shared
     private let player = PlayerController.shared
     @Bindable private var np = NowPlaying.shared
     @State private var editingProgress: Float = 0
@@ -26,10 +27,35 @@ struct FullPlayerView: View {
     }
     @State private var showLyrics = false
     @State private var showQueue = false
+    @State private var isAudioBadgeHiddenByUser = false
     @State private var pendingRoute: DetailRoute?
     @State private var showSongMenu = false
     @State private var artworkEntryOffset: CGFloat = 0
     @State private var canvasDominantColors: [Color]?
+
+    private var currentTrackDownload: DownloadedTrackEntity? {
+        guard let videoId = np.videoId else { return nil }
+        return downloadManager.track(for: videoId)
+    }
+
+    private var isCurrentSongDownloaded: Bool {
+        guard let videoId = np.videoId else { return false }
+        return downloadManager.isDownloaded(videoId: videoId)
+    }
+
+    private var effectiveIs256AAC: Bool {
+        if let track = currentTrackDownload {
+            return track.is256AAC
+        }
+        return np.is256AAC
+    }
+
+    private var effectiveAudioBadge: String? {
+        if let track = currentTrackDownload, let badge = track.audioBadgeText {
+            return badge
+        }
+        return np.audioBadge
+    }
 
     private var activeColorScheme: ColorScheme {
         settings.preferredColorScheme ?? environmentColorScheme
@@ -221,6 +247,7 @@ struct FullPlayerView: View {
             np.isVideoMode = false
             showLyrics = false
             showQueue = false
+            isAudioBadgeHiddenByUser = false
             preloadLyrics()
         }
         .onChange(of: np.queueSongs.count) { _, _ in
@@ -351,9 +378,16 @@ struct FullPlayerView: View {
                 titleHeight: 28,
                 titleColor: primaryForeground,
                 artistColor: secondaryForeground,
-                badge: np.audioBadge,
-                is256AAC: np.is256AAC,
-                resetKey: "\(np.videoId ?? "")-\(np.queueIndex)"
+                badge: effectiveAudioBadge,
+                is256AAC: effectiveIs256AAC,
+                isDownloaded: isCurrentSongDownloaded,
+                showsBadge: isCurrentSongDownloaded || !isAudioBadgeHiddenByUser,
+                resetKey: "\(np.videoId ?? "")-\(np.queueIndex)",
+                onTitleTap: {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isAudioBadgeHiddenByUser.toggle()
+                    }
+                }
             )
             .foregroundStyle(primaryForeground)
             .tint(primaryForeground)
