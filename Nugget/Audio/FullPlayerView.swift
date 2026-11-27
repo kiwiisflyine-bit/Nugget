@@ -76,10 +76,6 @@ struct FullPlayerView: View {
         }
     }
 
-    /// Combines blur and transparent intensity so the underlying screen shows
-    /// through while keeping foreground controls readable. Higher transparent
-    /// intensity increases visibility of the underlying screen (lowering scrim
-    /// opacity).
     private var blurOverlay: LinearGradient {
         let blur = min(max(settings.playerBlurIntensity, 0), 1)
         let seeThrough = min(max(settings.playerTransparentIntensity, 0), 1)
@@ -301,8 +297,6 @@ struct FullPlayerView: View {
         }
     }
 
-    // MARK: - Gestures
-
     private var artworkSwipe: some Gesture {
         DragGesture(minimumDistance: 20)
             .onEnded { value in
@@ -341,8 +335,6 @@ struct FullPlayerView: View {
             }
     }
 
-    // MARK: - Player Content
-
     private func preloadLyrics() {
         guard let id = np.videoId else { return }
         let upcoming = np.upcomingSongs(prefixLimit: 3).map(\.videoId)
@@ -360,7 +352,8 @@ struct FullPlayerView: View {
                 titleColor: primaryForeground,
                 artistColor: secondaryForeground,
                 badge: np.audioBadge,
-                is256AAC: np.is256AAC
+                is256AAC: np.is256AAC,
+                resetKey: "\(np.videoId ?? "")-\(np.queueIndex)"
             )
             .foregroundStyle(primaryForeground)
             .tint(primaryForeground)
@@ -467,7 +460,6 @@ struct FullPlayerView: View {
             x: 0,
             y: 12
         )
-        // Clean parabolic / ease-in-out scale without any bounce or overshoot
         .scaleEffect(np.isPlaying ? 1.0 : 0.78)
         .animation(.easeInOut(duration: 0.24), value: np.isPlaying)
         .offset(x: artworkEntryOffset)
@@ -542,8 +534,6 @@ struct FullPlayerView: View {
 }
 
 private extension Color {
-    /// Composites a semi-transparent tint over a solid base color so the result
-    /// is genuinely opaque and never lets underlying views bleed through.
     func blended(over base: Color) -> Color {
         let top = UIColor(self)
         let bottom = UIColor(base)
