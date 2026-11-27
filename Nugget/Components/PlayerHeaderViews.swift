@@ -19,21 +19,56 @@ struct PlayerTitleBlock: View {
     var artistColor: Color? = nil
     var badge: String? = nil
     var is256AAC: Bool = false
+    var isDownloaded: Bool = false
+    var showsBadge: Bool = true
     var resetKey: String = ""
+    var onTitleTap: (() -> Void)? = nil
+
+    private var effectiveBadgeText: String? {
+        if let badge, !badge.isEmpty {
+            return badge
+        }
+        return isDownloaded ? "DL" : nil
+    }
+
+    private var shouldRenderBadge: Bool {
+        guard effectiveBadgeText != nil else { return false }
+        return isDownloaded || showsBadge
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
             HStack(alignment: .center, spacing: 6) {
-                MarqueeText(
-                    text: title,
-                    font: titleFont,
-                    frameHeight: titleHeight,
-                    textColor: titleColor
-                )
-                .id("\(resetKey)|\(title)")
+                Group {
+                    if let onTitleTap {
+                        Button(action: onTitleTap) {
+                            MarqueeText(
+                                text: title,
+                                font: titleFont,
+                                frameHeight: titleHeight,
+                                textColor: titleColor
+                            )
+                            .id("\(resetKey)|\(title)")
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        MarqueeText(
+                            text: title,
+                            font: titleFont,
+                            frameHeight: titleHeight,
+                            textColor: titleColor
+                        )
+                        .id("\(resetKey)|\(title)")
+                    }
+                }
 
-                if let badge, !badge.isEmpty {
-                    AudioQualityBadge(badge: badge, is256AAC: is256AAC, isPlayerSurface: true)
+                if shouldRenderBadge, let text = effectiveBadgeText {
+                    AudioQualityBadge(
+                        badge: text,
+                        is256AAC: is256AAC,
+                        isPlayerSurface: true,
+                        isDownloaded: isDownloaded
+                    )
                 }
             }
 
