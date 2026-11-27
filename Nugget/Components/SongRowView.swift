@@ -39,12 +39,22 @@ struct SongRowView: View {
     @State private var showSongMenu = false
     @ObservedObject private var downloadManager = DownloadManager.shared
 
+    private var isDownloaded: Bool {
+        downloadManager.isDownloaded(videoId: song.videoId)
+    }
+
     private var resolvedAudioBadge: String? {
-        song.audioBadge ?? downloadManager.track(for: song.videoId)?.audioBadgeText
+        if let track = downloadManager.track(for: song.videoId), let badge = track.audioBadgeText {
+            return badge
+        }
+        return song.audioBadge ?? (isDownloaded ? "DL" : nil)
     }
 
     private var is256AAC: Bool {
-        song.is256AAC ?? (downloadManager.track(for: song.videoId)?.is256AAC ?? false)
+        if let track = downloadManager.track(for: song.videoId) {
+            return track.is256AAC
+        }
+        return song.is256AAC ?? false
     }
 
     private var isActivelyDownloading: Bool {
@@ -69,7 +79,11 @@ struct SongRowView: View {
                         .lineLimit(1)
 
                     if let badge = resolvedAudioBadge {
-                        AudioQualityBadge(badge: badge, is256AAC: is256AAC)
+                        AudioQualityBadge(
+                            badge: badge,
+                            is256AAC: is256AAC,
+                            isDownloaded: isDownloaded
+                        )
                     }
                 }
 
