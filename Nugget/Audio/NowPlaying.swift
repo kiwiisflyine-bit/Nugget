@@ -547,11 +547,11 @@ final class NowPlaying {
             let prepared = Self.prepareArtwork(image)
             let colors = prepared.extractDominantColors()
             await MainActor.run {
-                guard let self, self.videoId == targetVideoId else { return }
-                self.thumbnailUIImage = prepared
-                self.thumbnailImage = Image(uiImage: prepared)
-                self.thumbnailVersion &+= 1
-                self.dominantColors = colors
+                guard let owner = self, owner.videoId == targetVideoId else { return }
+                owner.thumbnailUIImage = prepared
+                owner.thumbnailImage = Image(uiImage: prepared)
+                owner.thumbnailVersion &+= 1
+                owner.dominantColors = colors
                 PlayerController.shared.updateNowPlayingArtwork()
             }
         }
