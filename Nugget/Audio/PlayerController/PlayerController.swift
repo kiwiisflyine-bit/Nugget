@@ -183,7 +183,9 @@ extension PlayerController {
         playState.send(.stopped)
         NowPlaying.shared.isPlaying = false
         NowPlaying.shared.currentTime = 0
-        updateNowPlayingProgress()
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        nowPlayingInfo.removeAll()
         Task { await PlaybackStateService.shared.stopTracking() }
     }
 
@@ -217,6 +219,15 @@ extension PlayerController {
         if let videoId, let title, videoId != NowPlaying.shared.videoId {
             NowPlaying.shared.update(title: title, artist: artist, videoId: videoId, artists: artists, thumbnailUrl: thumbnailUrl)
         }
+
+        // Immediately keep the lock-screen Now Playing session active with the incoming track metadata.
+        assertAudioSession()
+        NowPlaying.shared.isPlaying = true
+        NowPlaying.shared.currentTime = 0
+        if let duration, duration > 0 {
+            NowPlaying.shared.duration = duration
+        }
+        setNowPlayingMetadata()
 
         let skipStart = await SponsorBlockIntegration.shared.preloadedStartOffset(for: videoId)
         guard NowPlaying.shared.videoId == videoId else {
@@ -287,7 +298,9 @@ extension PlayerController {
         playState.send(.playing)
         NowPlaying.shared.isPlaying = true
         NowPlaying.shared.currentTime = 0
-        NowPlaying.shared.duration = max(0, duration ?? 0)
+        if let duration, duration > 0 {
+            NowPlaying.shared.duration = duration
+        }
         setNowPlayingMetadata()
     }
 
@@ -660,7 +673,12 @@ extension PlayerController {
                 Task { await PlaybackStateService.shared.stopTracking() }
             }
             if isEof {
-                self.playState.send(.stopped)
+                let willContinue = NowPlaying.shared.isRepeatOn
+                    || NowPlaying.shared.hasNext
+                    || (SettingsStore.shared.autoplaySimilar && videoId != nil)
+                if !willContinue {
+                    self.playState.send(.stopped)
+                }
                 NowPlaying.shared.stopped(videoId: videoId, isEof: true)
             } else if isError {
                 if self.currentVideoId == videoId { self.currentVideoId = nil }
@@ -1137,6 +1155,7 @@ extension PlayerController {
             nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+        MPNowPlayingInfoCenter.default().playbackState = np.isPlaying ? .playing : .paused
     }
 
     func updateNowPlayingProgress() {
@@ -1147,22 +1166,28 @@ extension PlayerController {
             mpv_get_property(mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos)
             return (dur, pos)
         }
-        guard var props, props.dur > 0 else { return }
         let np = NowPlaying.shared
+        let rawDur = props?.dur ?? 0
+        var rawPos = props?.pos ?? 0
+        let resolvedDur = rawDur > 0 ? rawDur : np.duration
 
         if let seek = pendingSeek {
-            if abs(props.pos - seek.target) > 1, Date() < seek.deadline {
-                props.pos = seek.target
+            if abs(rawPos - seek.target) > 1, Date() < seek.deadline {
+                rawPos = seek.target
             } else {
                 pendingSeek = nil
             }
         }
 
         var info = nowPlayingInfo
-        info[MPMediaItemPropertyPlaybackDuration] = props.dur
-        np.duration = props.dur
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = props.pos
-        np.currentTime = props.pos
+        if resolvedDur > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = resolvedDur
+            np.duration = resolvedDur
+        }
+        if rawPos > 0 || resolvedDur > 0 {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = max(0, rawPos)
+            np.currentTime = max(0, rawPos)
+        }
         info[MPNowPlayingInfoPropertyPlaybackRate] = np.isPlaying ? 1 : 0
         info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = np.queueIndex
         info[MPNowPlayingInfoPropertyPlaybackQueueCount] = np.queueSongs.count
