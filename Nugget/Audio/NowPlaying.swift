@@ -249,14 +249,57 @@ final class NowPlaying {
         }
         let song = queueSongs[queueIndex]
         update(with: song)
-        PlayerController.shared.setNowPlayingMetadata()
+        PlayerController.shared.setNowPlayingMetadata(activateSession: false)
         persistQueueState()
 
         currentLoadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             Log.nowPlaying.info("[\(logContext)] Starting playback load for '\(song.title)' (\(song.videoId)), token=\(token)")
             do {
-                try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId, loadToken: token)
+                if let localURL = await DownloadManager.shared.localURL(for: song.videoId) {
+                    guard self.currentLoadToken == token else { return }
+                    let downloadedTrack = await DownloadManager.shared.track(for: song.videoId)
+                    await PlayerController.shared.play(
+                        url: localURL.absoluteString,
+                        title: song.title,
+                        artist: song.artists.map(\.name).joined(separator: ", "),
+                        videoId: song.videoId,
+                        duration: song.duration > 0 ? TimeInterval(song.duration) : nil,
+                        artists: song.artists,
+                        thumbnailUrl: song.thumbnailUrl,
+                        loadToken: token
+                    )
+                    self.updateVideoAvailability()
+                    if let downloadedTrack {
+                        self.updateAudioQuality(
+                            itag: downloadedTrack.itag,
+                            codec: downloadedTrack.codec,
+                            bitrate: downloadedTrack.bitrate
+                        )
+                    }
+                } else if let cached = await StreamCache.shared.get(videoId: song.videoId) {
+                    guard self.currentLoadToken == token else { return }
+                    await PlayerController.shared.play(
+                        url: cached.streamUrl,
+                        title: cached.title ?? song.title,
+                        artist: cached.author ?? song.artists.map(\.name).joined(separator: ", "),
+                        videoId: song.videoId,
+                        duration: cached.duration.flatMap { $0 > 0 ? TimeInterval($0) : nil } ?? (song.duration > 0 ? TimeInterval(song.duration) : nil),
+                        artists: song.artists,
+                        loudnessDb: cached.loudnessDb,
+                        thumbnailUrl: song.thumbnailUrl,
+                        userAgent: cached.userAgent,
+                        clientName: cached.clientName,
+                        loadToken: token
+                    )
+                    self.updateAudioQuality(
+                        itag: cached.itag,
+                        mimeType: cached.mimeType,
+                        bitrate: cached.bitrate
+                    )
+                } else {
+                    try await PlaybackManager.shared.resolveAndPlay(videoId: song.videoId, loadToken: token)
+                }
                 guard self.currentLoadToken == token else {
                     Log.nowPlaying.notice("[\(logContext)] Load completed for \(song.videoId) but superseded by newer token \(self.currentLoadToken). Discarding.")
                     return
@@ -417,7 +460,7 @@ final class NowPlaying {
                 self.isShuffleOn = false
                 let first = songs[0]
                 update(with: first)
-                PlayerController.shared.setNowPlayingMetadata()
+                PlayerController.shared.setNowPlayingMetadata(activateSession: false)
                 try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId)
                 self.persistQueueState()
             } catch {
