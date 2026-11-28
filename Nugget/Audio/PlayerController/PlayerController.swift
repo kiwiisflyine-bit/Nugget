@@ -84,6 +84,9 @@ final class PlayerController {
     var pendingResumeAt: TimeInterval = 0
     var nowPlayingInfo = [String: Any]()
     private var pendingSeek: (target: TimeInterval, deadline: Date)?
+    private var transitionBgTask: UIBackgroundTaskIdentifier = .invalid
+    private var silentKeepAlivePlayer: AVAudioPlayer?
+    private var keepAliveStopTask: Task<Void, Never>?
 
     var currentTime: TimeInterval {
         withMpv { mpv in
@@ -159,6 +162,7 @@ extension PlayerController {
     @MainActor
     func stop() {
         Log.player.info("TRANSITION stop requested - halting mpv and resetting active playback")
+        endTransitionKeepAlive()
         desiredPlaying = false
         withMpv { mpv in
             var flag: Int32 = 1
@@ -360,7 +364,11 @@ extension PlayerController {
         }
         playState.send(paused ? .paused : .playing)
         NowPlaying.shared.isPlaying = !paused
-        if !paused { assertAudioSession() }
+        if paused {
+            endTransitionKeepAlive()
+        } else {
+            assertAudioSession()
+        }
         updateNowPlayingProgress()
     }
 
@@ -580,6 +588,9 @@ extension PlayerController {
             self.assertAudioSession()
             self.setNowPlayingMetadata()
             self.applyPendingResumeIfNeeded()
+            if actuallyPlaying {
+                self.endTransitionKeepAlive(afterDelay: 0.5)
+            }
             let checkId = self.currentVideoId
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -599,6 +610,7 @@ extension PlayerController {
             let newDur: Double = prop.data?.load(as: Double.self) ?? 0
             if newDur > 0 {
                 Task { @MainActor in
+                    guard self.pendingVideoId == nil, self.currentVideoId == NowPlaying.shared.videoId else { return }
                     NowPlaying.shared.duration = newDur
                     self.setNowPlayingMetadata()
                 }
@@ -673,10 +685,15 @@ extension PlayerController {
                 Task { await PlaybackStateService.shared.stopTracking() }
             }
             if isEof {
+                if self.currentVideoId == videoId { self.currentVideoId = nil }
+                if self.pendingVideoId == videoId { self.pendingVideoId = nil }
                 let willContinue = NowPlaying.shared.isRepeatOn
                     || NowPlaying.shared.hasNext
                     || (SettingsStore.shared.autoplaySimilar && videoId != nil)
-                if !willContinue {
+                if willContinue {
+                    self.beginTransitionKeepAlive()
+                } else {
+                    self.endTransitionKeepAlive()
                     self.playState.send(.stopped)
                 }
                 NowPlaying.shared.stopped(videoId: videoId, isEof: true)
@@ -1015,7 +1032,7 @@ extension PlayerController {
     func assertAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            if session.category != .playback || session.mode != .default {
+            if session.category != .playback || session.mode != .default || session.routeSharingPolicy != .longFormAudio {
                 try session.setCategory(.playback, mode: .default, policy: .longFormAudio)
             }
             try session.setActive(true)
@@ -1048,6 +1065,7 @@ extension PlayerController {
         case .began:
             Log.player.info("AUDIO_INTERRUPTION began")
             wasPlayingBeforeInterruption = desiredPlaying || playState.value == .playing
+            endTransitionKeepAlive()
             if playState.value == .playing {
                 Task { @MainActor in
                     self.setPaused(true)
@@ -1104,6 +1122,108 @@ extension PlayerController {
     }
 }
 
+// MARK: - Transition keep-alive
+
+extension PlayerController {
+    /// Holds a short background task and renders silent PCM audio across track
+    /// transitions so iOS neither suspends the process nor tears down the lock
+    /// screen / notification Now Playing widget while mpv closes and reopens AO.
+    func beginTransitionKeepAlive() {
+        keepAliveStopTask?.cancel()
+        keepAliveStopTask = nil
+        assertAudioSession()
+        startSilentKeepAlivePlayer()
+        if transitionBgTask == .invalid {
+            transitionBgTask = UIApplication.shared.beginBackgroundTask(withName: "nugget-track-transition") { [weak self] in
+                let finish: @MainActor () -> Void = { self?.endTransitionBackgroundTaskOnly() }
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated(finish)
+                } else {
+                    DispatchQueue.main.async { finish() }
+                }
+            }
+        }
+    }
+
+    func endTransitionKeepAlive(afterDelay delay: TimeInterval = 0) {
+        keepAliveStopTask?.cancel()
+        keepAliveStopTask = nil
+        if delay <= 0 {
+            stopTransitionKeepAliveNow()
+            return
+        }
+        keepAliveStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.stopTransitionKeepAliveNow()
+        }
+    }
+
+    private func stopTransitionKeepAliveNow() {
+        keepAliveStopTask = nil
+        if let player = silentKeepAlivePlayer, player.isPlaying {
+            player.stop()
+            player.currentTime = 0
+        }
+        endTransitionBackgroundTaskOnly()
+    }
+
+    private func endTransitionBackgroundTaskOnly() {
+        guard transitionBgTask != .invalid else { return }
+        let taskId = transitionBgTask
+        transitionBgTask = .invalid
+        UIApplication.shared.endBackgroundTask(taskId)
+    }
+
+    private func startSilentKeepAlivePlayer() {
+        if let player = silentKeepAlivePlayer {
+            if !player.isPlaying {
+                player.play()
+            }
+            return
+        }
+        guard let player = try? AVAudioPlayer(data: Self.silentWavData, fileTypeHint: AVFileType.wav.rawValue) else {
+            return
+        }
+        player.numberOfLoops = -1
+        player.volume = 0.01
+        player.prepareToPlay()
+        player.play()
+        silentKeepAlivePlayer = player
+    }
+
+    private static let silentWavData: Data = {
+        let sampleRate: UInt32 = 44_100
+        let channels: UInt16 = 1
+        let bitsPerSample: UInt16 = 16
+        let dataSize: UInt32 = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
+        let chunkSize: UInt32 = 36 + dataSize
+        let byteRate: UInt32 = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
+        let blockAlign: UInt16 = channels * (bitsPerSample / 8)
+
+        var data = Data(capacity: Int(44 + dataSize))
+        func appendLE<T: FixedWidthInteger>(_ value: T) {
+            var le = value.littleEndian
+            withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
+        }
+        data.append(contentsOf: "RIFF".utf8)
+        appendLE(chunkSize)
+        data.append(contentsOf: "WAVE".utf8)
+        data.append(contentsOf: "fmt ".utf8)
+        appendLE(UInt32(16))
+        appendLE(UInt16(1))
+        appendLE(channels)
+        appendLE(sampleRate)
+        appendLE(byteRate)
+        appendLE(blockAlign)
+        appendLE(bitsPerSample)
+        data.append(contentsOf: "data".utf8)
+        appendLE(dataSize)
+        data.append(Data(count: Int(dataSize)))
+        return data
+    }()
+}
+
 // MARK: - Now Playing info / lock-screen
 
 extension PlayerController {
@@ -1112,19 +1232,20 @@ extension PlayerController {
         let np = NowPlaying.shared
         nowPlayingInfo.removeAll()
 
-        let liveDur = withMpv { mpv in
+        let isSyncedToCurrentTrack = pendingVideoId == nil && currentVideoId == np.videoId
+        let liveDur = isSyncedToCurrentTrack ? (withMpv { mpv in
             var val = Double(0)
             mpv_get_property(mpv, "duration", MPV_FORMAT_DOUBLE, &val)
             return val
-        } ?? 0
+        } ?? 0) : 0
         let duration = liveDur > 0 ? liveDur : np.duration
         if duration > 0 { np.duration = duration }
 
-        let livePos = withMpv { mpv in
+        let livePos = isSyncedToCurrentTrack ? (withMpv { mpv in
             var val = Double(0)
             mpv_get_property(mpv, "time-pos", MPV_FORMAT_DOUBLE, &val)
             return val
-        } ?? 0
+        } ?? 0) : 0
         let elapsed = livePos > 0 ? livePos : np.currentTime
 
         nowPlayingInfo[MPMediaItemPropertyTitle] = np.title
@@ -1159,19 +1280,20 @@ extension PlayerController {
     }
 
     func updateNowPlayingProgress() {
-        let props: (dur: Double, pos: Double)? = withMpv { mpv in
+        let np = NowPlaying.shared
+        let isSyncedToCurrentTrack = pendingVideoId == nil && currentVideoId == np.videoId
+        let props: (dur: Double, pos: Double)? = isSyncedToCurrentTrack ? withMpv { mpv in
             var dur = Double(0)
             mpv_get_property(mpv, "duration", MPV_FORMAT_DOUBLE, &dur)
             var pos = Double(0)
             mpv_get_property(mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos)
             return (dur, pos)
-        }
-        let np = NowPlaying.shared
+        } : nil
         let rawDur = props?.dur ?? 0
-        var rawPos = props?.pos ?? 0
+        var rawPos = isSyncedToCurrentTrack ? (props?.pos ?? 0) : np.currentTime
         let resolvedDur = rawDur > 0 ? rawDur : np.duration
 
-        if let seek = pendingSeek {
+        if let seek = pendingSeek, isSyncedToCurrentTrack {
             if abs(rawPos - seek.target) > 1, Date() < seek.deadline {
                 rawPos = seek.target
             } else {
@@ -1184,7 +1306,7 @@ extension PlayerController {
             info[MPMediaItemPropertyPlaybackDuration] = resolvedDur
             np.duration = resolvedDur
         }
-        if rawPos > 0 || resolvedDur > 0 {
+        if rawPos > 0 || resolvedDur > 0 || np.videoId != nil {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = max(0, rawPos)
             np.currentTime = max(0, rawPos)
         }
