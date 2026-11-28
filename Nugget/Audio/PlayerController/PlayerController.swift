@@ -1238,7 +1238,7 @@ extension PlayerController {
             mpv_get_property(mpv, "duration", MPV_FORMAT_DOUBLE, &val)
             return val
         } ?? 0) : 0
-        let duration = liveDur > 0 ? liveDur : np.duration
+        let duration = liveDur > 0 ? liveDur : (np.duration ?? 0)
         if duration > 0 { np.duration = duration }
 
         let livePos = isSyncedToCurrentTrack ? (withMpv { mpv in
@@ -1246,7 +1246,7 @@ extension PlayerController {
             mpv_get_property(mpv, "time-pos", MPV_FORMAT_DOUBLE, &val)
             return val
         } ?? 0) : 0
-        let elapsed = livePos > 0 ? livePos : np.currentTime
+        let elapsed = livePos > 0 ? livePos : (np.currentTime ?? 0)
 
         nowPlayingInfo[MPMediaItemPropertyTitle] = np.title
         nowPlayingInfo[MPMediaItemPropertyArtist] = np.artist
