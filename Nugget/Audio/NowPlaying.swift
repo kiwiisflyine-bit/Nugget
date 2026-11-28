@@ -2,7 +2,7 @@
 //  NowPlaying.swift
 //  Nugget
 //
-//  
+//
 //
 
 import AVFoundation
@@ -576,11 +576,12 @@ final class NowPlaying {
     /// Publishes a loaded image as the current artwork, preserving aspect ratio.
     private func publishArtwork(_ image: UIImage) {
         let targetVideoId = self.videoId
-        Task.detached(priority: .userInitiated) { [weak self] in
+        weak let weakSelf = self
+        Task.detached(priority: .userInitiated) {
             let prepared = Self.prepareArtwork(image)
             let colors = prepared.extractDominantColors()
             await MainActor.run {
-                guard let owner = self, owner.videoId == targetVideoId else { return }
+                guard let owner = weakSelf, owner.videoId == targetVideoId else { return }
                 owner.thumbnailUIImage = prepared
                 owner.thumbnailImage = Image(uiImage: prepared)
                 owner.thumbnailVersion &+= 1
