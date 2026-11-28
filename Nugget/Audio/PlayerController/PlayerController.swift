@@ -220,14 +220,13 @@ extension PlayerController {
             NowPlaying.shared.update(title: title, artist: artist, videoId: videoId, artists: artists, thumbnailUrl: thumbnailUrl)
         }
 
-        // Immediately keep the lock-screen Now Playing session active with the incoming track metadata.
-        assertAudioSession()
+        // Keep lock-screen Now Playing session active with incoming track metadata.
         NowPlaying.shared.isPlaying = true
         NowPlaying.shared.currentTime = 0
         if let duration, duration > 0 {
             NowPlaying.shared.duration = duration
         }
-        setNowPlayingMetadata()
+        setNowPlayingMetadata(activateSession: false)
 
         let skipStart = await SponsorBlockIntegration.shared.preloadedStartOffset(for: videoId)
         guard NowPlaying.shared.videoId == videoId else {
@@ -245,7 +244,6 @@ extension PlayerController {
         let isNewSong = prevVideoId != nil && videoId != prevVideoId
 
         desiredPlaying = true
-        assertAudioSession()
         loadedMuxedURL = nil
         loadedVideoOnlyURL = nil
         voWarmedVideoId = nil
@@ -291,6 +289,7 @@ extension PlayerController {
             stop()
             return
         }
+        assertAudioSession()
         if isNewSong {
             await PlaybackStateService.shared.stopTracking()
         }
@@ -461,6 +460,7 @@ extension PlayerController {
                         mpv_set_property_string(mpv, "pause", "no")
                         return ["loadfile", url, "replace"].withUnsafeCArg { mpv_command(mpv, $0) }
                     }
+                    self.assertAudioSession()
                 }
             }
 
@@ -577,7 +577,9 @@ extension PlayerController {
                 self.currentVideoId = pendingVideoId
                 self.pendingVideoId = nil
             }
-            self.assertAudioSession()
+            if actuallyPlaying {
+                self.assertAudioSession()
+            }
             self.setNowPlayingMetadata()
             self.applyPendingResumeIfNeeded()
             let checkId = self.currentVideoId
@@ -637,7 +639,14 @@ extension PlayerController {
 
     nonisolated private func handlePlaybackRestart() {
         let flipPending = self.videoFlipAwaitingRestart
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if self.desiredPlaying {
+                self.assertAudioSession()
+            }
+            self.setNowPlayingMetadata()
+            self.updateNowPlayingProgress()
+
             guard flipPending else { return }
             let ok = self.muxedActive && NowPlaying.shared.videoId == self.muxedVideoId
             self.videoFlipAwaitingRestart = false
@@ -1107,9 +1116,12 @@ extension PlayerController {
 // MARK: - Now Playing info / lock-screen
 
 extension PlayerController {
-    func setNowPlayingMetadata() {
-        assertAudioSession()
+    func setNowPlayingMetadata(activateSession: Bool = true) {
+        if activateSession {
+            assertAudioSession()
+        }
         let np = NowPlaying.shared
+        let existingArtwork = nowPlayingInfo[MPMediaItemPropertyArtwork]
         nowPlayingInfo.removeAll()
 
         let liveDur = withMpv { mpv in
@@ -1139,13 +1151,15 @@ extension PlayerController {
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackQueueCount] = np.queueSongs.count
         if let image = np.thumbnailUIImage {
             nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        } else if let existingArtwork {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = existingArtwork
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         MPNowPlayingInfoCenter.default().playbackState = np.isPlaying ? .playing : .paused
         Log.player.info(
             "NOW_PLAYING_PUBLISH title='\(np.title)' artist='\(np.artist)' " +
             "duration=\(duration) rate=\(nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] ?? 0) " +
-            "artwork=\(np.thumbnailUIImage != nil) keys=\(nowPlayingInfo.keys.count)"
+            "artwork=\(nowPlayingInfo[MPMediaItemPropertyArtwork] != nil) keys=\(nowPlayingInfo.keys.count)"
         )
     }
 
