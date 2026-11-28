@@ -249,6 +249,7 @@ final class NowPlaying {
         }
         let song = queueSongs[queueIndex]
         update(with: song)
+        PlayerController.shared.setNowPlayingMetadata()
         persistQueueState()
 
         currentLoadTask = Task { @MainActor [weak self] in
@@ -283,14 +284,24 @@ final class NowPlaying {
         }
     }
 
-    func update(title: String, artist: String?, videoId: String, album: String? = nil, artists: [YTArtist] = [], thumbnailUrl: String? = nil, audioBadge: String? = nil, is256AAC: Bool = false) {
+    func update(
+        title: String,
+        artist: String?,
+        videoId: String,
+        album: String? = nil,
+        artists: [YTArtist] = [],
+        thumbnailUrl: String? = nil,
+        audioBadge: String? = nil,
+        is256AAC: Bool = false,
+        knownDuration: TimeInterval = 0
+    ) {
         self.isPlaying = true
         self.title = title
         self.artists = artists
         self.artist = cleanArtistDisplay(artist ?? "")
         self.albumTitle = album ?? ""
         self.currentTime = 0
-        self.duration = 0
+        self.duration = max(0, knownDuration)
         self.videoId = videoId
         self.hasVideo = false
         self.isVideoMode = false
@@ -315,7 +326,8 @@ final class NowPlaying {
             artists: song.artists,
             thumbnailUrl: song.thumbnailUrl,
             audioBadge: song.audioBadge,
-            is256AAC: song.is256AAC ?? false
+            is256AAC: song.is256AAC ?? false,
+            knownDuration: TimeInterval(max(0, song.duration))
         )
     }
 
@@ -367,7 +379,10 @@ final class NowPlaying {
             recoverFromPlaybackFailure(videoId: videoId)
             return
         }
-        currentTime = duration
+        let willContinue = isRepeatOn || hasNext || (SettingsStore.shared.autoplaySimilar && videoId != nil)
+        if !willContinue {
+            currentTime = duration
+        }
         if let finishedId = videoId,
            duration >= 600 || musicVideoType == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE" {
             Task { await EpisodePlaybackStore.shared.markPlayed(videoId: finishedId) }
@@ -402,6 +417,7 @@ final class NowPlaying {
                 self.isShuffleOn = false
                 let first = songs[0]
                 update(with: first)
+                PlayerController.shared.setNowPlayingMetadata()
                 try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId)
                 self.persistQueueState()
             } catch {
@@ -659,8 +675,14 @@ final class NowPlaying {
 
     @MainActor
     private func timerTick() {
-        currentTime = PlayerController.shared.currentTime
-        duration = PlayerController.shared.duration
+        let pos = PlayerController.shared.currentTime
+        let dur = PlayerController.shared.duration
+        if pos > 0 || dur > 0 {
+            currentTime = pos
+        }
+        if dur > 0 {
+            duration = dur
+        }
         PlayerController.shared.updateNowPlayingProgress()
         SponsorBlockIntegration.shared.tick()
         if let videoId, duration >= 600 || musicVideoType == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE" {
