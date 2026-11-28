@@ -2,7 +2,7 @@
 //  NowPlaying.swift
 //  Nugget
 //
-//
+//  
 //
 
 import AVFoundation
@@ -249,7 +249,6 @@ final class NowPlaying {
         }
         let song = queueSongs[queueIndex]
         update(with: song)
-        PlayerController.shared.beginTransitionKeepAlive()
         PlayerController.shared.setNowPlayingMetadata()
         persistQueueState()
 
@@ -399,47 +398,33 @@ final class NowPlaying {
         } else {
             isPlaying = false
             stopTimer()
-            PlayerController.shared.endTransitionKeepAlive()
             PlayerController.shared.updateNowPlayingProgress()
             Task { await PlaybackStateService.shared.stopTracking() }
         }
     }
 
     private func autoplaySimilar(from videoId: String) {
-        currentLoadTask?.cancel()
-        let token = UUID()
-        currentLoadToken = token
-        PlayerController.shared.beginTransitionKeepAlive()
-
-        currentLoadTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        Task {
             do {
                 let radio = try await PersonalizationService.shared.fetchRadio(videoId: videoId)
-                guard self.currentLoadToken == token else { return }
                 let songs = radio.songs
                 guard !songs.isEmpty else {
-                    self.isPlaying = false
-                    self.stopTimer()
-                    PlayerController.shared.endTransitionKeepAlive()
-                    PlayerController.shared.updateNowPlayingProgress()
-                    Task { await PlaybackStateService.shared.stopTracking() }
+                    isPlaying = false
                     return
                 }
                 self.queueSongs = songs
                 self.queueIndex = 0
                 self.isShuffleOn = false
                 let first = songs[0]
-                self.update(with: first)
+                update(with: first)
                 PlayerController.shared.setNowPlayingMetadata()
-                try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId, loadToken: token)
-                guard self.currentLoadToken == token else { return }
+                try await PlaybackManager.shared.resolveAndPlay(videoId: first.videoId)
                 self.persistQueueState()
             } catch {
-                if Task.isCancelled || self.currentLoadToken != token { return }
                 Log.nowPlaying.error("Autoplay similar failed: \(error)")
                 PlayerController.shared.stop()
-                self.isPlaying = false
-                self.currentTime = 0
+                isPlaying = false
+                currentTime = 0
             }
         }
     }
@@ -448,7 +433,6 @@ final class NowPlaying {
         guard let videoId else {
             isPlaying = false
             currentTime = 0
-            PlayerController.shared.endTransitionKeepAlive()
             return
         }
         PlayerController.shared.handleVideoStreamFailure()
@@ -460,7 +444,7 @@ final class NowPlaying {
         let activeWindow = (recentFailures[videoId] ?? []).filter {
             now.timeIntervalSince($0) < Self.recoveryWindowSeconds
         }
-        if (!progressed && !activeWindow.isEmpty) || activeWindow.count >= Self.maxRecoveryAttempts {
+        if !progressed || activeWindow.count >= Self.maxRecoveryAttempts {
             recentFailures[videoId] = activeWindow + [now]
             Log.nowPlaying.notice(
                 "Stream failed for \(videoId) (progressed=\(progressed), attempts=\(activeWindow.count)); stopping recovery loop"
@@ -476,7 +460,6 @@ final class NowPlaying {
         recentFailures[videoId] = activeWindow + [now]
         isPlaying = false
         currentTime = 0
-        PlayerController.shared.beginTransitionKeepAlive()
         Log.nowPlaying.notice("Stream failed mid-play, re-resolving \(videoId)")
         Task {
             await PlayerConfigStore.shared.notifyStreamRejection()
@@ -576,12 +559,11 @@ final class NowPlaying {
     /// Publishes a loaded image as the current artwork, preserving aspect ratio.
     private func publishArtwork(_ image: UIImage) {
         let targetVideoId = self.videoId
-        weak let weakSelf = self
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             let prepared = Self.prepareArtwork(image)
             let colors = prepared.extractDominantColors()
             await MainActor.run {
-                guard let owner = weakSelf, owner.videoId == targetVideoId else { return }
+                guard let owner = self, owner.videoId == targetVideoId else { return }
                 owner.thumbnailUIImage = prepared
                 owner.thumbnailImage = Image(uiImage: prepared)
                 owner.thumbnailVersion &+= 1
@@ -670,7 +652,7 @@ final class NowPlaying {
         }
     }
 
-    func preloadNextTrack() {
+    private func preloadNextTrack() {
         guard hasNext else { return }
         let nextId = queueSongs[queueIndex + 1].videoId
         SponsorBlockIntegration.shared.warm(for: nextId)
@@ -693,24 +675,15 @@ final class NowPlaying {
 
     @MainActor
     private func timerTick() {
-        let player = PlayerController.shared
-        if player.pendingVideoId == nil && player.currentVideoId == videoId {
-            let pos = player.currentTime
-            let dur = player.duration
-            if pos > 0 || dur > 0 {
-                currentTime = pos
-            }
-            if dur > 0 {
-                duration = dur
-            }
+        let pos = PlayerController.shared.currentTime
+        let dur = PlayerController.shared.duration
+        if pos > 0 || dur > 0 {
+            currentTime = pos
         }
-        if isPlaying,
-           duration > 2,
-           (duration - currentTime) <= 1.5,
-           isRepeatOn || hasNext || (SettingsStore.shared.autoplaySimilar && videoId != nil) {
-            player.beginTransitionKeepAlive()
+        if dur > 0 {
+            duration = dur
         }
-        player.updateNowPlayingProgress()
+        PlayerController.shared.updateNowPlayingProgress()
         SponsorBlockIntegration.shared.tick()
         if let videoId, duration >= 600 || musicVideoType == "MUSIC_VIDEO_TYPE_PODCAST_EPISODE" {
             let vid = videoId
