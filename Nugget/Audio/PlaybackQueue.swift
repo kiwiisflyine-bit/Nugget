@@ -81,7 +81,6 @@ enum PlaybackQueue {
         NowPlaying.shared.queueSongs = merged
         NowPlaying.shared.queueIndex = targetIndex
         NowPlaying.shared.persistQueueState()
-        NowPlaying.shared.preloadNextTrack()
     }
 
     private static func preservingArtists(_ songs: [SongItem], over current: [SongItem]) -> [SongItem] {
