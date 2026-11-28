@@ -488,7 +488,7 @@ extension PlayerController {
         #endif
         mpv_set_option_string(mpv, "audio-exclusive", "no")
 
-        mpv_set_option_string(mpv, "keep-open", "no")
+        mpv_set_option_string(mpv, "keep-open", "yes")
         mpv_set_option_string(mpv, "cache", "yes")
         mpv_set_option_string(mpv, "cache-secs", "120")
         mpv_set_option_string(mpv, "demuxer-max-bytes", "200M")
