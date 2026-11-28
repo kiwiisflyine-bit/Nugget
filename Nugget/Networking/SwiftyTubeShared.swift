@@ -16,7 +16,6 @@ extension InnerTubeClient {
     /// Updates streamShared with active cookies from the Premium Stream Account,
     /// falling back to the Primary Account if Premium is not logged in.
     static func updateStreamAuth() async {
-        let previousAuth = await streamShared.currentAuth()
         let premiumStore = CookieStore.premium
         let primaryStore = CookieStore.primary
         if await premiumStore.isLoggedIn() {
@@ -25,10 +24,7 @@ extension InnerTubeClient {
             await streamShared.loadState(from: primaryStore)
         }
         await streamShared.syncNuggetLocale()
-        let newAuth = await streamShared.currentAuth()
-        if newAuth != previousAuth {
-            await StreamCache.shared.clear()
-        }
+        await StreamCache.shared.clear()
     }
 }
 
